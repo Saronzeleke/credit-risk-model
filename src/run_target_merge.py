@@ -12,9 +12,9 @@ if 'CustomerId' not in features_df.columns:
 # Engineer target
 target_df = create_proxy_target(transactions, snapshot_date=None)
 
-# Ensure CustomerId types match
-features_df['CustomerId'] = features_df['CustomerId'].astype(int)
-target_df['CustomerId'] = target_df['CustomerId'].astype(int)
+# Sanitize CustomerId: remove any non-numeric characters, then convert to int
+features_df['CustomerId'] = features_df['CustomerId'].astype(str).str.extract('(\d+)')[0].astype(int)
+target_df['CustomerId'] = target_df['CustomerId'].astype(str).str.extract('(\d+)')[0].astype(int)
 
 # Merge and drop any missing targets
 final_df = integrate_target_variable(features_df, target_df)
