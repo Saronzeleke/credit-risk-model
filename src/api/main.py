@@ -1,236 +1,384 @@
+"""
+FastAPI application for credit risk prediction.
+"""
 import os
-import uuid
-import pickle
-import joblib
+import sys
+import time
 import logging
 from datetime import datetime
-from typing import Dict, Any
+from typing import List, Dict, Any, Optional
+from contextlib import asynccontextmanager
 
+import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+import joblib
 
-# ----------------------
-# Logging
-# ----------------------
-logging.basicConfig(level=logging.INFO)
+# FastAPI imports
+from fastapi import FastAPI, HTTPException, status, BackgroundTasks
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+
+# MLflow imports
+import mlflow
+import mlflow.sklearn
+from mlflow.tracking import MlflowClient
+
+# Import Pydantic models
+from src.api.pydantic_models import (
+    PredictionRequest,
+    PredictionResponse,
+    RiskPrediction,
+    HealthCheck,
+    ErrorResponse,
+    TransactionFeatures
+)
+
+# Import data processing
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
+from src.data_processing import create_feature_pipeline
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
-# ----------------------
-# FastAPI app
-# ----------------------
-app = FastAPI(title="Credit Risk Prediction API")
+# Global variables
+MODEL = None
+MODEL_VERSION = None
+PIPELINE = None
+START_TIME = time.time()
 
-# ----------------------
-# Globals
-# ----------------------
-model = None
-preprocessor = None
-model_info = None
 
-# ----------------------
-# Pydantic schemas
-# ----------------------
-class Transaction(BaseModel):
-    AccountId: int
-    BatchId: int
-    CustomerId: int
-    FraudResult: int
-    ProductId: int
-    ProviderId: int
-    SubscriptionId: int
-    Amount: float
-    Value: float
-    CurrencyCode: int
-    CountryCode: int
-    ProductCategory: int
-    ChannelId: int
-    PricingStrategy: int
-    TransactionStartTime: str
-    TransactionId: int
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager for startup and shutdown events."""
+    # Startup
+    logger.info("Starting up Credit Risk API...")
+    load_model()
+    yield
+    # Shutdown
+    logger.info("Shutting down Credit Risk API...")
 
-class PredictionResponse(BaseModel):
-    transaction_id: str
-    prediction: int
-    probability: float
-    risk_level: str
-    threshold_used: float
-    timestamp: str
 
-# ----------------------
-# Model Manager
-# ----------------------
-class ModelManager:
-    @staticmethod
-    def load_model(model_path: str = "models/gradient_boosting_model.pkl"):
-        global model, model_info
+# Create FastAPI app
+app = FastAPI(
+    title="Credit Risk Prediction API",
+    description="API for predicting credit risk based on transaction data",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# Add middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, specify exact origins
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=["*"]  # In production, specify exact hosts
+)
+
+
+def load_model():
+    """Load the trained model from MLflow registry."""
+    global MODEL, MODEL_VERSION, PIPELINE
+    
+    try:
+        # MLflow configuration
+        mlflow.set_tracking_uri("sqlite:///mlflow.db")
+        
+        # Initialize MLflow client
+        client = MlflowClient()
+        
+        # Get the latest production model
+        model_name = "credit_risk_model"
+        
         try:
-            model_data = joblib.load(model_path)
-            model = model_data['model']
-            model_info = {
-                'model_type': model_data.get('model_type', 'unknown'),
-                'best_params': model_data.get('best_params'),
-                'threshold': model_data.get('threshold', 0.5),
-                'metrics': model_data.get('metrics', {}),
-                'feature_names': model_data.get('feature_names'),
-                'loaded_at': datetime.now().isoformat()
-            }
-            if not model_info['feature_names']:
-                logger.warning(
-                    "Model loaded without 'feature_names'. "
-                    "Feature alignment will use post-preprocessing columns. "
-                    "Ensure input matches training schema exactly!"
-                )
-            logger.info(f"Model loaded successfully: {model_info['model_type']}")
-        except Exception as e:
-            logger.error(f"Failed to load model: {e}")
-            raise
-
-    @staticmethod
-    def load_preprocessor(preprocessor_path: str = "data/processed/preprocessor.pkl"):
-        global preprocessor
-        try:
-            with open(preprocessor_path, "rb") as f:
-                preprocessor = pickle.load(f)
-            logger.info("Preprocessor loaded successfully")
-        except Exception as e:
-            logger.error(f"Failed to load preprocessor: {e}")
-            raise
-
-    @staticmethod
-    def preprocess_transaction(transaction: Dict) -> pd.DataFrame:
-        global preprocessor, model_info
-
-        if preprocessor is None:
-            raise HTTPException(status_code=500, detail="Preprocessor not loaded")
-
-        df = pd.DataFrame([transaction])
-
-        # 🔥 DROP NON-FEATURE COLUMNS (likely not used during training)
-        NON_FEATURE_COLS = {
-            'AccountId', 'BatchId', 'CustomerId', 'TransactionId',
-            'TransactionStartTime', 'FraudResult'  # FraudResult is likely the TARGET
-        }
-        cols_to_drop = [c for c in NON_FEATURE_COLS if c in df.columns]
-        if cols_to_drop:
-            logger.debug(f"Dropping non-feature columns: {cols_to_drop}")
-            df = df.drop(columns=cols_to_drop)
-
-        # Feature engineering (ONLY if used during training!)
-        if 'Amount' in df.columns:
-            df['Amount_max'] = df['Amount']
-            df['Amount_min'] = df['Amount']
-            df['Amount_mean'] = df['Amount']
-            df['Amount_std'] = 0.0
-
-        # Preprocessing
-        config = preprocessor.get('config', {})
-        numerical_features = config.get('features', {}).get('numerical', [])
-        categorical_features = config.get('features', {}).get('categorical', [])
-
-        numerical_features = [f for f in numerical_features if f in df.columns]
-        categorical_features = [f for f in categorical_features if f in df.columns]
-
-        # Impute numerical
-        imputer = preprocessor.get('imputer')
-        if imputer and numerical_features:
-            df[numerical_features] = imputer.transform(df[numerical_features])
-
-        # Scale numerical
-        scaler = preprocessor.get('scaler')
-        if scaler and numerical_features:
-            df[numerical_features] = scaler.transform(df[numerical_features])
-
-        # Encode categorical
-        encoder = preprocessor.get('encoder')
-        if encoder and categorical_features:
-            encoded = encoder.transform(df[categorical_features])
-            encoded_df = pd.DataFrame(
-                encoded,
-                columns=encoder.get_feature_names_out(categorical_features),
-                index=df.index
-            )
-            df = df.drop(columns=categorical_features)
-            df = pd.concat([df, encoded_df], axis=1)
-
-        # Feature alignment
-        feature_names = model_info.get('feature_names') if model_info else None
-        if feature_names:
-            for col in feature_names:
-                if col not in df.columns:
-                    df[col] = 0.0
-            df = df[feature_names]
-        else:
-            df = df.reindex(sorted(df.columns), axis=1)
-
-        # 🔥 Ensure all columns are float64 to avoid 'ufunc isnan' error
-        try:
-            df = df.astype('float64')
-        except Exception as e:
-            logger.error(f"Failed to convert to float64. dtypes: {df.dtypes.to_dict()}")
-            raise HTTPException(status_code=500, detail=f"Non-numeric data in features: {e}")
-
-        return df
-
-    @staticmethod
-    def predict_single(transaction: Dict) -> Dict[str, Any]:
-        global model, model_info
-        if model is None:
-            raise HTTPException(status_code=500, detail="Model not loaded")
-        try:
-            df_processed = ModelManager.preprocess_transaction(transaction)
-            threshold = model_info.get('threshold', 0.5) if model_info else 0.5
-            proba = model.predict_proba(df_processed)[0, 1]
-            prediction = int(proba >= threshold)
-
-            if proba < 0.3:
-                risk_level = "Low"
-            elif proba < 0.7:
-                risk_level = "Medium"
+            # Try to get production model
+            model_versions = client.get_latest_versions(model_name, stages=["Production"])
+            if model_versions:
+                model_version = model_versions[0]
             else:
-                risk_level = "High"
-
-            return {
-                "prediction": prediction,
-                "probability": float(proba),
-                "risk_level": risk_level,
-                "threshold_used": threshold
-            }
+                # Fallback to latest version
+                model_versions = client.get_latest_versions(model_name)
+                model_version = model_versions[0]
+            
+            model_uri = f"models:/{model_name}/{model_version.version}"
+            
+            # Load model
+            MODEL = mlflow.sklearn.load_model(model_uri)
+            MODEL_VERSION = model_version.version
+            
+            # Load feature pipeline (assuming it's saved as an artifact)
+            pipeline_path = "models/feature_pipeline.pkl"
+            if os.path.exists(pipeline_path):
+                PIPELINE = joblib.load(pipeline_path)
+            else:
+                # Create default pipeline
+                PIPELINE = create_feature_pipeline()
+            
+            logger.info(f"Successfully loaded model version {MODEL_VERSION}")
+            logger.info(f"Model type: {type(MODEL).__name__}")
+            
         except Exception as e:
-            logger.error(f"Prediction error: {e}")
-            raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
+            logger.warning(f"Could not load from MLflow registry: {str(e)}")
+            
+            # Fallback to local model file
+            local_model_path = "models/best_model.pkl"
+            if os.path.exists(local_model_path):
+                MODEL = joblib.load(local_model_path)
+                MODEL_VERSION = "local"
+                
+                # Try to load pipeline
+                pipeline_path = "models/feature_pipeline.pkl"
+                if os.path.exists(pipeline_path):
+                    PIPELINE = joblib.load(pipeline_path)
+                else:
+                    PIPELINE = create_feature_pipeline()
+                
+                logger.info(f"Loaded local model from {local_model_path}")
+            else:
+                raise FileNotFoundError(f"Model file not found: {local_model_path}")
+    
+    except Exception as e:
+        logger.error(f"Error loading model: {str(e)}")
+        MODEL = None
+        PIPELINE = None
 
-# ----------------------
-# Startup
-# ----------------------
-@app.on_event("startup")
-async def startup_event():
-    ModelManager.load_model()
-    ModelManager.load_preprocessor()
-    logger.info("API startup complete")
 
-# ----------------------
-# Prediction endpoint
-# ----------------------
-@app.post("/predict", response_model=PredictionResponse)
-async def predict(transaction: Transaction):
-    logger.info("Received prediction request")
-    transaction_dict = transaction.dict()  # No exclude_unset!
-    result = ModelManager.predict_single(transaction_dict)
-    response = PredictionResponse(
-        transaction_id=str(uuid.uuid4()),
-        prediction=result["prediction"],
-        probability=result["probability"],
-        risk_level=result["risk_level"],
-        threshold_used=result["threshold_used"],
-        timestamp=datetime.now().isoformat()
+def preprocess_transactions(transactions: List[TransactionFeatures]) -> pd.DataFrame:
+    """Preprocess transaction data for model prediction."""
+    # Convert to DataFrame
+    data = pd.DataFrame([t.dict() for t in transactions])
+    
+    # Apply feature pipeline if available
+    if PIPELINE is not None:
+        try:
+            processed_data = PIPELINE.transform(data)
+        except Exception as e:
+            logger.error(f"Error in pipeline transformation: {str(e)}")
+            # Fallback to basic processing
+            processed_data = data
+    else:
+        processed_data = data
+    
+    return processed_data
+
+
+def predict_risk(features: pd.DataFrame) -> List[Dict[str, Any]]:
+    """Make risk predictions using the loaded model."""
+    if MODEL is None:
+        raise ValueError("Model not loaded")
+    
+    predictions = []
+    
+    try:
+        # Make predictions
+        if hasattr(MODEL, 'predict_proba'):
+            probabilities = MODEL.predict_proba(features)
+            risk_scores = probabilities[:, 1]  # Probability of being high risk
+        else:
+            risk_scores = MODEL.predict(features)
+        
+        # Get customer IDs
+        if 'CustomerId' in features.columns:
+            customer_ids = features['CustomerId'].tolist()
+        else:
+            customer_ids = [f"customer_{i}" for i in range(len(features))]
+        
+        # Create predictions
+        for i, (customer_id, score) in enumerate(zip(customer_ids, risk_scores)):
+            # Determine risk class
+            if score >= 0.7:
+                risk_class = "HIGH"
+            elif score >= 0.3:
+                risk_class = "MEDIUM"
+            else:
+                risk_class = "LOW"
+            
+            # Calculate confidence (distance from decision boundary)
+            confidence = abs(score - 0.5) * 2
+            
+            predictions.append({
+                "customer_id": str(customer_id),
+                "risk_score": float(score),
+                "risk_class": risk_class,
+                "confidence": float(confidence)
+            })
+    
+    except Exception as e:
+        logger.error(f"Error making predictions: {str(e)}")
+        raise
+    
+    return predictions
+
+
+@app.get("/", tags=["Root"])
+async def root():
+    """Root endpoint."""
+    return {
+        "message": "Credit Risk Prediction API",
+        "version": "1.0.0",
+        "docs": "/docs",
+        "health": "/health"
+    }
+
+
+@app.get("/health", response_model=HealthCheck, tags=["Health"])
+async def health_check():
+    """Health check endpoint."""
+    uptime = time.time() - START_TIME
+    
+    return HealthCheck(
+        status="healthy" if MODEL is not None else "unhealthy",
+        model_loaded=MODEL is not None,
+        model_version=MODEL_VERSION,
+        uptime_seconds=round(uptime, 2)
     )
-    logger.info(f"Prediction completed: {response}")
-    return response
 
-# ----------------------
-# Run uvicorn directly (optional)
-# ----------------------
+
+@app.post("/predict", response_model=PredictionResponse, tags=["Prediction"])
+async def predict(request: PredictionRequest, background_tasks: BackgroundTasks = None):
+    """
+    Predict credit risk for transactions.
+    
+    Args:
+        request: Prediction request with transaction data
+        background_tasks: FastAPI background tasks
+        
+    Returns:
+        Risk predictions for each customer
+    """
+    start_time = time.time()
+    
+    try:
+        # Validate model is loaded
+        if MODEL is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Model not loaded. Please check the health endpoint."
+            )
+        
+        # Preprocess transactions
+        logger.info(f"Processing {len(request.transactions)} transactions...")
+        features = preprocess_transactions(request.transactions)
+        
+        # Make predictions
+        predictions_data = predict_risk(features)
+        
+        # Calculate inference time
+        inference_time = (time.time() - start_time) * 1000  # Convert to ms
+        
+        # Create response
+        response = PredictionResponse(
+            predictions=[RiskPrediction(**pred) for pred in predictions_data],
+            model_version=MODEL_VERSION or "unknown",
+            inference_time_ms=round(inference_time, 2),
+            timestamp=datetime.now().isoformat()
+        )
+        
+        # Log prediction (optional background task)
+        if background_tasks:
+            background_tasks.add_task(
+                log_prediction,
+                request=request.dict(),
+                response=response.dict()
+            )
+        
+        logger.info(f"Prediction completed in {inference_time:.2f} ms")
+        return response
+    
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        logger.error(f"Prediction error: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal server error: {str(e)}"
+        )
+
+
+@app.post("/predict/batch", response_model=PredictionResponse, tags=["Prediction"])
+async def predict_batch(requests: List[PredictionRequest]):
+    """
+    Batch prediction endpoint for multiple requests.
+    """
+    # Combine all transactions
+    all_transactions = []
+    for req in requests:
+        all_transactions.extend(req.transactions)
+    
+    # Create single request
+    batch_request = PredictionRequest(transactions=all_transactions)
+    
+    # Call predict endpoint
+    return await predict(batch_request)
+
+
+@app.get("/model/info", tags=["Model"])
+async def model_info():
+    """Get information about the loaded model."""
+    if MODEL is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Model not loaded"
+        )
+    
+    info = {
+        "model_type": type(MODEL).__name__,
+        "model_version": MODEL_VERSION,
+        "features_required": getattr(MODEL, 'n_features_in_', 'unknown'),
+        "training_date": "unknown",  # Could be extracted from model metadata
+        "model_parameters": getattr(MODEL, 'get_params', lambda: {})()
+    }
+    
+    return info
+
+
+async def log_prediction(request: Dict, response: Dict):
+    """Background task to log predictions."""
+    # In production, log to database or monitoring system
+    logger.info(f"Logged prediction: {len(response['predictions'])} predictions made")
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request, exc):
+    """Global exception handler."""
+    logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
+    
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content=ErrorResponse(
+            error="Internal server error",
+            detail=str(exc),
+            timestamp=datetime.now().isoformat()
+        ).dict()
+    )
+
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("src.api.main:app", host="127.0.0.1", port=8000, reload=True)
+    
+    # Load model before starting server
+    load_model()
+    
+    # Start server
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,  # Enable auto-reload in development
+        log_level="info"
+    )
