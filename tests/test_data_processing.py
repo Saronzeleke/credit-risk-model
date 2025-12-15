@@ -6,7 +6,7 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from src.data_processing import TemporalFeatureExtractor, AggregateFeatureEngineer, create_data_pipeline
-from src.target_engineering import RFMTargetEngineer
+from src.target_engineering import RFMCalculator
 
 def test_temporal_feature_extractor():
     """Test temporal feature extraction"""
@@ -81,16 +81,16 @@ def test_rfm_target_engineer():
     })
     
     # Initialize and transform
-    engineer = RFMTargetEngineer(snapshot_date='2018-11-25', random_state=42)
+    engineer = RFMCalculator(snapshot_date='2018-11-25', random_state=42)
     rfm_df = engineer.calculate_rfm(test_data)
     
     # Assertions
     assert 'recency' in rfm_df.columns
     assert 'frequency' in rfm_df.columns
     assert 'monetary' in rfm_df.columns
-    assert len(rfm_df) == 3  # 3 unique customers
+    assert len(rfm_df) == 3  
     
-    print("✓ RFMTargetEngineer test passed!")
+    print("RFMTargetEngineer test passed!")
 
 def test_data_pipeline():
     """Test complete data pipeline creation"""
