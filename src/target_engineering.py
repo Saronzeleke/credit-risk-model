@@ -1,99 +1,173 @@
-# src/target_engineering.py
+"""
+Proxy target variable engineering using RFM analysis and clustering.
+Fully compatible with your dataset:
+Columns used:
+- CustomerId
+- TransactionStartTime
+- Amount
+Target created: 'is_high_risk'
+"""
+
 import pandas as pd
 import numpy as np
-from datetime import datetime
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
+from typing import Optional, Dict, Any
 import warnings
-warnings.filterwarnings('ignore')
 
-class RFMTargetEngineer:
-    """Create proxy target variable using RFM and clustering"""
-    
-    def __init__(self, snapshot_date=None, n_clusters=3, random_state=42):
+warnings.filterwarnings("ignore")
+
+
+# -----------------------------
+# RFM Calculator
+# -----------------------------
+class RFMCalculator:
+    """Calculate Recency, Frequency, Monetary metrics for customers."""
+
+    def __init__(
+        self,
+        customer_id_col: str = "CustomerId",
+        transaction_date_col: str = "TransactionStartTime",
+        amount_col: str = "Amount",
+        snapshot_date: Optional[str] = None,
+    ):
+        self.customer_id_col = customer_id_col
+        self.transaction_date_col = transaction_date_col
+        self.amount_col = amount_col
         self.snapshot_date = snapshot_date
+        self.rfm_data_ = None
+
+    def calculate_rfm(self, data: pd.DataFrame) -> pd.DataFrame:
+        data[self.transaction_date_col] = pd.to_datetime(
+            data[self.transaction_date_col], errors="coerce"
+        )
+
+        snapshot_date = (
+            pd.to_datetime(self.snapshot_date)
+            if self.snapshot_date
+            else data[self.transaction_date_col].max()
+        )
+
+        rfm_df = data.groupby(self.customer_id_col).agg(
+            recency=(self.transaction_date_col, lambda x: (snapshot_date - x.max()).days),
+            frequency=(self.customer_id_col, "count"),
+            monetary=(self.amount_col, "sum"),
+        ).reset_index()
+
+        self.rfm_data_ = rfm_df.copy()
+        return rfm_df
+
+
+# -----------------------------
+# Risk Label Generator
+# -----------------------------
+class RiskLabelGenerator:
+    """Generate proxy risk labels using RFM clustering."""
+
+    def __init__(self, n_clusters: int = 3, random_state: int = 42):
         self.n_clusters = n_clusters
         self.random_state = random_state
-        self.kmeans = None
-        self.scaler = StandardScaler()
-        
-    def calculate_rfm(self, df, customer_col='CustomerId', date_col='TransactionStartTime', 
-                     amount_col='Amount', value_col='Value'):
-        """Calculate RFM metrics for each customer"""
-        
-        # Convert date column
-        df[date_col] = pd.to_datetime(df[date_col])
-        
-        # Set snapshot date if not provided
-        if self.snapshot_date is None:
-            self.snapshot_date = df[date_col].max()
-        else:
-            self.snapshot_date = pd.to_datetime(self.snapshot_date)
-        
-        # Calculate RFM metrics
-        rfm_df = df.groupby(customer_col).agg({
-            date_col: lambda x: (self.snapshot_date - x.max()).days,  # Recency
-            amount_col: 'count',  # Frequency
-            value_col: 'sum'  # Monetary
-        }).reset_index()
-        
-        # Rename columns
-        rfm_df.columns = [customer_col, 'recency', 'frequency', 'monetary']
-        
-        # Handle negative monetary values (assume absolute value for risk assessment)
-        rfm_df['monetary'] = rfm_df['monetary'].abs()
-        
-        return rfm_df
-    
-    def create_proxy_target(self, rfm_df):
-        """Create proxy target variable using K-Means clustering"""
-        
-        # Select RFM features for clustering
-        rfm_features = rfm_df[['recency', 'frequency', 'monetary']].copy()
-        
-        # Scale features
-        rfm_scaled = self.scaler.fit_transform(rfm_features)
-        
-        # Apply K-Means clustering
-        self.kmeans = KMeans(n_clusters=self.n_clusters, random_state=self.random_state, n_init=10)
-        clusters = self.kmeans.fit_predict(rfm_scaled)
-        
-        # Add cluster labels
-        rfm_df['cluster'] = clusters
-        
-        # Analyze clusters to identify high-risk group
-        cluster_stats = rfm_df.groupby('cluster')[['recency', 'frequency', 'monetary']].mean()
-        
-        # High-risk: High recency (recent activity), low frequency, low monetary
-        # Calculate risk score
-        cluster_stats['risk_score'] = (
-            cluster_stats['recency'].rank(ascending=True) +  # Higher recency = higher risk
-            cluster_stats['frequency'].rank(ascending=False) +  # Lower frequency = higher risk
-            cluster_stats['monetary'].rank(ascending=False)  # Lower monetary = higher risk
+        self.scaler_ = StandardScaler()
+        self.kmeans_ = None
+        self.risk_cluster_id_ = None
+
+    def prepare_features(self, rfm_df: pd.DataFrame) -> np.ndarray:
+        features = rfm_df[["recency", "frequency", "monetary"]].copy()
+        # Log transform frequency and monetary
+        features["frequency"] = np.log1p(features["frequency"])
+        features["monetary"] = np.log1p(features["monetary"] - features["monetary"].min() + 1)
+        scaled_features = self.scaler_.fit_transform(features)
+        return scaled_features
+
+    def cluster_customers(self, rfm_df: pd.DataFrame) -> pd.DataFrame:
+        features = self.prepare_features(rfm_df)
+        self.kmeans_ = KMeans(
+            n_clusters=self.n_clusters,
+            random_state=self.random_state,
+            n_init=10,
+            max_iter=300,
         )
-        
-        # Identify high-risk cluster (highest risk score)
-        high_risk_cluster = cluster_stats['risk_score'].idxmax()
-        
-        # Create binary target variable
-        rfm_df['is_high_risk'] = (rfm_df['cluster'] == high_risk_cluster).astype(int)
-        
-        print(f"Cluster Statistics:\n{cluster_stats}")
-        print(f"\nHigh-risk cluster: {high_risk_cluster}")
-        print(f"Risk distribution: {rfm_df['is_high_risk'].value_counts(normalize=True)}")
-        
-        return rfm_df[['CustomerId', 'is_high_risk']]
-    
-    def engineer_target_variable(self, df, customer_col='CustomerId'):
-        """Complete target engineering pipeline"""
-        
-        # Calculate RFM
-        rfm_df = self.calculate_rfm(df)
-        
-        # Create proxy target
-        target_df = self.create_proxy_target(rfm_df)
-        
-        # Merge target back to original data
-        df_with_target = df.merge(target_df, on=customer_col, how='left')
-        
-        return df_with_target
+        cluster_labels = self.kmeans_.fit_predict(features)
+        rfm_clustered = rfm_df.copy()
+        rfm_clustered["cluster"] = cluster_labels
+        silhouette_avg = silhouette_score(features, cluster_labels)
+        self.identify_high_risk_cluster(rfm_clustered)
+        print(f"RFM clustering completed. Silhouette score: {silhouette_avg:.3f}")
+        print(f"High-risk cluster identified: {self.risk_cluster_id_}")
+        return rfm_clustered
+
+    def identify_high_risk_cluster(self, rfm_clustered: pd.DataFrame):
+        # Higher recency = more risky, lower frequency/monetary = more risky
+        cluster_stats = rfm_clustered.groupby("cluster").agg(
+            recency_mean=("recency", "mean"),
+            frequency_mean=("frequency", "mean"),
+            monetary_mean=("monetary", "mean"),
+        ).reset_index()
+
+        # Normalize
+        for col in ["recency_mean", "frequency_mean", "monetary_mean"]:
+            cluster_stats[f"{col}_norm"] = (
+                cluster_stats[col] - cluster_stats[col].min()
+            ) / (cluster_stats[col].max() - cluster_stats[col].min() + 1e-10)
+
+        cluster_stats["risk_score"] = (
+            cluster_stats["recency_mean_norm"]
+            + (1 - cluster_stats["frequency_mean_norm"])
+            + (1 - cluster_stats["monetary_mean_norm"])
+        )
+
+        high_risk_cluster = cluster_stats.loc[
+            cluster_stats["risk_score"].idxmax(), "cluster"
+        ]
+        self.risk_cluster_id_ = int(high_risk_cluster)
+
+    def create_risk_labels(self, rfm_clustered: pd.DataFrame) -> pd.DataFrame:
+        rfm_labeled = rfm_clustered.copy()
+        rfm_labeled["is_high_risk"] = (
+            rfm_labeled["cluster"] == self.risk_cluster_id_
+        ).astype(int)
+        print(f"Target distribution: {rfm_labeled['is_high_risk'].value_counts().to_dict()}")
+        return rfm_labeled[["CustomerId", "is_high_risk"]]
+
+
+# -----------------------------
+# Public API
+# -----------------------------
+def create_proxy_target(transaction_data: pd.DataFrame, snapshot_date: Optional[str] = None):
+    """Create proxy target variable."""
+    rfm_calculator = RFMCalculator(snapshot_date=snapshot_date)
+    rfm_df = rfm_calculator.calculate_rfm(transaction_data)
+
+    generator = RiskLabelGenerator()
+    rfm_clustered = generator.cluster_customers(rfm_df)
+    target_df = generator.create_risk_labels(rfm_clustered)
+    return target_df
+
+
+def integrate_target_variable(features_df: pd.DataFrame, target_df: pd.DataFrame):
+    """Merge target variable into features dataset."""
+    if "CustomerId" not in features_df.columns:
+        features_df = features_df.copy()
+        features_df["CustomerId"] = features_df.index
+    combined_df = features_df.merge(target_df, on="CustomerId", how="left")
+    missing_targets = combined_df["is_high_risk"].isna().sum()
+    if missing_targets > 0:
+        print(f"Warning: {missing_targets} samples missing target. Dropping them.")
+        combined_df = combined_df.dropna(subset=["is_high_risk"])
+    return combined_df
+
+
+# -----------------------------
+# Example usage
+# -----------------------------
+if __name__ == "__main__":
+    transactions = pd.read_csv("data/raw/data.csv")
+    features_df = pd.read_csv("data/processed/features.csv")
+
+    target_df = create_proxy_target(transactions, snapshot_date=None)
+    final_df = integrate_target_variable(features_df, target_df)
+    final_df.to_csv("data/processed/final_dataset.csv", index=False)
+
+    print(f"Final dataset shape: {final_df.shape}")
+    print(f"Target distribution:\n{final_df['is_high_risk'].value_counts(normalize=True)}")
