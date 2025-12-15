@@ -1,29 +1,49 @@
 version: '3.8'
 
 services:
-  api:
+  credit-risk-api:
     build: .
+    container_name: credit-risk-api
     ports:
       - "8000:8000"
     environment:
       - ENVIRONMENT=production
-      - LOG_LEVEL=INFO
+      - MLFLOW_TRACKING_URI=sqlite:///mlflow.db
+      - MODEL_REGISTRY=mlflow
     volumes:
-      - ./data:/app/data
       - ./models:/app/models
-    restart: unless-stopped
+      - ./data:/app/data
+      - ./logs:/app/logs
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 40s
+    networks:
+      - credit-risk-network
+    restart: unless-stopped
 
-  mlflow:
+  mlflow-server:
     image: ghcr.io/mlflow/mlflow:latest
+    container_name: mlflow-server
     ports:
       - "5000:5000"
-    command: mlflow server --backend-store-uri sqlite:///mlflow.db --default-artifact-root /mlflow-artifacts --host 0.0.0.0
-    volumes:
-      - ./mlflow:/mlflow-artifacts
     environment:
-      - MLFLOW_TRACKING_URI=http://localhost:5000
+      - BACKEND_STORE_URI=sqlite:///mlflow.db
+      - ARTIFACT_ROOT=/mlflow/artifacts
+    volumes:
+      - ./mlflow:/mlflow
+      - ./models:/models
+    command: mlflow server --backend-store-uri sqlite:///mlflow.db --default-artifact-root /mlflow/artifacts --host 0.0.0.0 --port 5000
+    networks:
+      - credit-risk-network
+    restart: unless-stopped
+
+networks:
+  credit-risk-network:
+    driver: bridge
+
+volumes:
+  mlflow-data:
+  model-data:
