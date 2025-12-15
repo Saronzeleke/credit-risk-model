@@ -1,250 +1,309 @@
 """
-Unit tests for data processing module.
+Unit tests for data processing functions.
 """
-
+import sys
+import os
 import pytest
 import pandas as pd
 import numpy as np
 from datetime import datetime
-import sys
-import os
 
 # Add src to path
-sys.path.append(os.path.join(os.path.dirname(__file__), '../src'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from src.data_processing import DataProcessor
+from data_processing import (
+    TemporalFeatureExtractor,
+    AggregateFeatureEngineer,
+    MissingValueHandler,
+    create_feature_pipeline
+)
+from target_engineering import RFMCalculator, RiskLabelGenerator
 
-class TestDataProcessor:
-    """Test cases for DataProcessor class."""
+
+class TestTemporalFeatureExtractor:
+    """Test TemporalFeatureExtractor class."""
     
-    @pytest.fixture
-    def sample_data(self):
-        """Create sample transaction data for testing."""
-        np.random.seed(42)
-        n_samples = 100
-        
-        data = {
-            'TransactionId': [f'TXN{i:06d}' for i in range(n_samples)],
-            'CustomerId': [f'CUST{i:04d}' for i in np.random.randint(1, 20, n_samples)],
-            'Amount': np.random.normal(100, 50, n_samples).round(2),
-            'Value': np.abs(np.random.normal(100, 50, n_samples)).round(2),
-            'ProductCategory': np.random.choice(['Electronics', 'Clothing', 'Food'], n_samples),
-            'ChannelId': np.random.choice(['Web', 'Android', 'iOS'], n_samples),
-            'ProviderId': np.random.choice(['P1', 'P2', 'P3'], n_samples),
-            'CountryCode': np.random.choice([254, 255, 256], n_samples),
-            'CurrencyCode': np.random.choice(['USD', 'EUR', 'GBP'], n_samples),
-            'TransactionStartTime': pd.date_range('2023-01-01', periods=n_samples, freq='H').strftime('%Y-%m-%d %H:%M:%S'),
-            'FraudResult': np.random.binomial(1, 0.1, n_samples)
-        }
-        
-        # Add some missing values
-        data['Amount'][:5] = np.nan
-        data['ProductCategory'][:3] = None
-        
-        return pd.DataFrame(data)
-    
-    @pytest.fixture
-    def processor(self):
-        """Create DataProcessor instance."""
-        return DataProcessor()
-    
-    def test_load_data(self, processor, tmp_path):
-        """Test data loading functionality."""
-        # Create a test CSV file
-        test_data = pd.DataFrame({'col1': [1, 2, 3], 'col2': ['a', 'b', 'c']})
-        test_file = tmp_path / 'test.csv'
-        test_data.to_csv(test_file, index=False)
-        
-        # Test loading
-        loaded_data = processor.load_data(str(test_file))
-        assert len(loaded_data) == 3
-        assert list(loaded_data.columns) == ['col1', 'col2']
-    
-    def test_create_proxy_target(self, processor, sample_data):
-        """Test proxy target creation."""
-        df_with_target = processor.create_proxy_target(sample_data)
-        
-        # Check that new columns are added
-        assert 'proxy_risk_score' in df_with_target.columns
-        assert 'high_risk' in df_with_target.columns
-        
-        # Check that high_risk is binary
-        assert set(df_with_target['high_risk'].unique()).issubset({0, 1})
-        
-        # Check that fraud transactions get higher risk scores
-        fraud_indices = df_with_target[df_with_target['FraudResult'] == 1].index
-        if len(fraud_indices) > 0:
-            assert all(df_with_target.loc[fraud_indices, 'proxy_risk_score'] >= 3)
-    
-    def test_engineer_features(self, processor, sample_data):
-        """Test feature engineering."""
-        df_with_features = processor.engineer_features(sample_data)
-        
-        # Check that time-based features are created
-        if 'TransactionStartTime' in sample_data.columns:
-            assert 'transaction_hour' in df_with_features.columns
-            assert 'transaction_dayofweek' in df_with_features.columns
-            assert 'time_of_day' in df_with_features.columns
-        
-        # Check that customer features are created
-        if 'CustomerId' in sample_data.columns:
-            assert 'transaction_count' in df_with_features.columns
-            assert 'Amount_mean' in df_with_features.columns
-    
-    def test_preprocess_features(self, processor, sample_data):
-        """Test feature preprocessing."""
-        # Create proxy target first
-        df_with_target = processor.create_proxy_target(sample_data)
-        df_with_features = processor.engineer_features(df_with_target)
-        
-        # Preprocess features
-        X = df_with_features.drop(columns=['high_risk', 'proxy_risk_score'], errors='ignore')
-        X_processed = processor.preprocess_features(X, fit=True)
-        
-        # Check that missing values are handled
-        assert not X_processed.isnull().any().any()
-        
-        # Check that features are scaled (mean ~0, std ~1 for numerical)
-        numerical_cols = processor.config['features']['numerical']
-        available_numerical = [col for col in numerical_cols if col in X_processed.columns]
-        
-        for col in available_numerical:
-            # Skip if column was encoded
-            if X_processed[col].nunique() > 10:  # Likely numerical
-                assert abs(X_processed[col].mean()) < 1e-10  # Approximately 0
-                assert abs(X_processed[col].std() - 1) < 1e-10  # Approximately 1
-    
-    def test_prepare_training_data(self, processor, sample_data):
-        """Test training data preparation."""
-        X_train, X_test, y_train, y_test = processor.prepare_training_data(sample_data, test_size=0.3)
-        
-        # Check shapes
-        total_samples = len(sample_data)
-        expected_train = int(total_samples * 0.7)
-        expected_test = total_samples - expected_train
-        
-        assert len(X_train) == expected_train
-        assert len(X_test) == expected_test
-        assert len(y_train) == expected_train
-        assert len(y_test) == expected_test
-        
-        # Check that features are preprocessed
-        assert not X_train.isnull().any().any()
-        assert not X_test.isnull().any().any()
-        
-        # Check that target exists
-        assert set(y_train.unique()).issubset({0, 1})
-        assert set(y_test.unique()).issubset({0, 1})
-    
-    def test_save_load_preprocessor(self, processor, sample_data, tmp_path):
-        """Test preprocessor saving and loading."""
-        # Process some data to fit the preprocessor
-        X_train, _, _, _ = processor.prepare_training_data(sample_data, test_size=0.2)
-        
-        # Save preprocessor
-        save_path = tmp_path / 'preprocessor.pkl'
-        processor.save_preprocessor(str(save_path))
-        
-        # Create new processor and load
-        new_processor = DataProcessor()
-        new_processor.load_preprocessor(str(save_path))
-        
-        # Check that loaded objects exist
-        assert new_processor.scaler is not None
-        assert new_processor.imputer is not None
-        assert new_processor.feature_names is not None
-        
-        # Test that loaded preprocessor can transform new data
-        test_data = sample_data.copy()
-        test_data = new_processor.create_proxy_target(test_data)
-        test_data = new_processor.engineer_features(test_data)
-        X_test = test_data.drop(columns=['high_risk', 'proxy_risk_score'], errors='ignore')
-        
-        X_processed = new_processor.preprocess_features(X_test, fit=False)
-        assert not X_processed.isnull().any().any()
-        assert X_processed.shape[1] == len(new_processor.feature_names)
-    
-    def test_config_loading(self, tmp_path):
-        """Test configuration loading."""
-        # Create a test config file
-        config = {
-            'features': {
-                'numerical': ['Amount', 'Value'],
-                'categorical': ['ProductCategory']
-            },
-            'preprocessing': {
-                'outlier_capping': False,
-                'scale_features': False
-            }
-        }
-        
-        import json
-        config_file = tmp_path / 'config.json'
-        with open(config_file, 'w') as f:
-            json.dump(config, f)
-        
-        # Create processor with config
-        processor = DataProcessor(config_path=str(config_file))
-        
-        # Check that config was loaded
-        assert not processor.config['preprocessing']['outlier_capping']
-        assert not processor.config['preprocessing']['scale_features']
-        assert processor.config['features']['numerical'] == ['Amount', 'Value']
-    
-    def test_missing_value_handling(self, processor):
-        """Test missing value imputation."""
-        # Create data with missing values
-        data = pd.DataFrame({
-            'Amount': [100, np.nan, 200, np.nan, 300],
-            'Value': [100, 150, np.nan, 200, 250],
-            'ProductCategory': ['A', 'B', 'A', None, 'B']
+    def setup_method(self):
+        """Setup test data."""
+        self.test_data = pd.DataFrame({
+            'TransactionDate': pd.date_range('2024-01-01', periods=10, freq='D'),
+            'CustomerId': [1, 2, 1, 2, 1, 2, 1, 2, 1, 2],
+            'TransactionAmount': [100, 150, 200, 250, 300, 350, 400, 450, 500, 550]
         })
         
-        # Add to config
-        processor.config['features']['numerical'] = ['Amount', 'Value']
-        processor.config['features']['categorical'] = ['ProductCategory']
-        
-        # Preprocess
-        X_processed = processor.preprocess_features(data, fit=True)
-        
-        # Check no missing values
-        assert not X_processed.isnull().any().any()
-        
-        # Check categorical encoding
-        if processor.config['preprocessing']['encode_categorical']:
-            # Should have encoded columns for categories
-            assert any('ProductCategory' in col for col in X_processed.columns)
+        self.extractor = TemporalFeatureExtractor(datetime_col='TransactionDate')
     
-    def test_outlier_capping(self, processor):
-        """Test outlier capping functionality."""
-        # Create data with outliers
-        data = pd.DataFrame({
-            'Amount': [100, 200, 300, 400, 1000],  # 1000 is an outlier
-            'Value': [50, 60, 70, 80, 90]
+    def test_fit_transform(self):
+        """Test fit and transform methods."""
+        # Fit the extractor
+        self.extractor.fit(self.test_data)
+        
+        # Transform data
+        transformed = self.extractor.transform(self.test_data)
+        
+        # Check that original column is removed
+        assert 'TransactionDate' not in transformed.columns
+        
+        # Check that new columns are created
+        expected_columns = [
+            'TransactionDate_hour',
+            'TransactionDate_day',
+            'TransactionDate_month',
+            'TransactionDate_year',
+            'TransactionDate_dayofweek',
+            'TransactionDate_is_weekend'
+        ]
+        
+        for col in expected_columns:
+            assert col in transformed.columns
+        
+        # Check data types
+        assert transformed['TransactionDate_hour'].dtype in [np.int32, np.int64]
+        assert transformed['TransactionDate_is_weekend'].dtype in [np.int32, np.int64]
+    
+    def test_missing_datetime_column(self):
+        """Test behavior when datetime column is missing."""
+        data_without_date = self.test_data.drop(columns=['TransactionDate'])
+        transformed = self.extractor.transform(data_without_date)
+        
+        # Should return the same data unchanged
+        assert transformed.equals(data_without_date)
+
+
+class TestAggregateFeatureEngineer:
+    """Test AggregateFeatureEngineer class."""
+    
+    def setup_method(self):
+        """Setup test data."""
+        self.test_data = pd.DataFrame({
+            'CustomerId': [1, 1, 1, 2, 2, 3],
+            'TransactionAmount': [100, 200, 300, 150, 250, 500]
         })
         
-        processor.config['features']['numerical'] = ['Amount', 'Value']
-        processor.config['preprocessing']['outlier_capping'] = True
-        processor.config['preprocessing']['cap_percentile'] = 90
-        
-        # Preprocess
-        X_processed = processor.preprocess_features(data, fit=True)
-        
-        # Check that outlier was capped
-        cap_value = data['Amount'].quantile(0.9)
-        assert X_processed['Amount'].max() <= cap_value
+        self.engineer = AggregateFeatureEngineer(
+            customer_id_col='CustomerId',
+            amount_col='TransactionAmount'
+        )
     
-    def test_feature_names_preservation(self, processor, sample_data):
-        """Test that feature names are preserved after preprocessing."""
-        X_train, _, _, _ = processor.prepare_training_data(sample_data, test_size=0.2)
+    def test_fit_transform(self):
+        """Test fit and transform methods."""
+        # Fit the engineer
+        self.engineer.fit(self.test_data)
         
-        # Check that processor stores feature names
-        assert processor.feature_names is not None
-        assert len(processor.feature_names) == X_train.shape[1]
+        # Transform data
+        transformed = self.engineer.transform(self.test_data)
         
-        # Check that feature names match columns
-        assert all(col in processor.feature_names for col in X_train.columns)
-        assert all(col in X_train.columns for col in processor.feature_names)
+        # Check that aggregate features are added
+        expected_columns = [
+            'CustomerId_total',
+            'CustomerId_avg',
+            'CustomerId_std',
+            'CustomerId_min',
+            'CustomerId_max',
+            'CustomerId_median',
+            'CustomerId_count'
+        ]
+        
+        for col in expected_columns:
+            assert col in transformed.columns
+        
+        # Check calculated values for CustomerId 1
+        customer_1_data = transformed[transformed['CustomerId'] == 1]
+        
+        assert customer_1_data['CustomerId_total'].iloc[0] == 600  # 100+200+300
+        assert customer_1_data['CustomerId_avg'].iloc[0] == 200   # (100+200+300)/3
+        assert customer_1_data['CustomerId_count'].iloc[0] == 3
+    
+    def test_missing_columns(self):
+        """Test behavior when required columns are missing."""
+        data_missing = self.test_data.drop(columns=['TransactionAmount'])
+        engineer = AggregateFeatureEngineer()
+        
+        # Should handle missing columns gracefully
+        engineer.fit(data_missing)
+        transformed = engineer.transform(data_missing)
+        
+        # Should return original data unchanged
+        assert transformed.equals(data_missing)
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+
+class TestMissingValueHandler:
+    """Test MissingValueHandler class."""
+    
+    def setup_method(self):
+        """Setup test data with missing values."""
+        self.test_data = pd.DataFrame({
+            'numeric_1': [1.0, 2.0, np.nan, 4.0, 5.0],
+            'numeric_2': [np.nan, 2.0, 3.0, np.nan, 5.0],
+            'categorical_1': ['A', 'B', np.nan, 'A', 'C'],
+            'categorical_2': ['X', np.nan, 'Y', 'Z', np.nan]
+        })
+        
+        self.handler = MissingValueHandler(
+            numeric_strategy='mean',
+            categorical_strategy='most_frequent'
+        )
+    
+    def test_fit_transform(self):
+        """Test fit and transform methods with simple imputation."""
+        # Fit the handler
+        self.handler.fit(self.test_data)
+        
+        # Transform data
+        transformed = self.handler.transform(self.test_data)
+        
+        # Check that there are no missing values
+        assert transformed.isna().sum().sum() == 0
+        
+        # Check that numeric missing values are filled with mean
+        numeric_mean = self.test_data['numeric_1'].mean()
+        assert transformed['numeric_1'].iloc[2] == pytest.approx(numeric_mean, 0.01)
+    
+    def test_knn_imputation(self):
+        """Test KNN imputation."""
+        handler_knn = MissingValueHandler(knn_impute=True, n_neighbors=2)
+        
+        # Fit and transform
+        handler_knn.fit(self.test_data)
+        transformed = handler_knn.transform(self.test_data)
+        
+        # Check that there are no missing values
+        assert transformed.isna().sum().sum() == 0
+
+
+class TestRFMCalculator:
+    """Test RFMCalculator class."""
+    
+    def setup_method(self):
+        """Setup test transaction data."""
+        dates = pd.date_range('2024-01-01', periods=20, freq='D')
+        self.test_data = pd.DataFrame({
+            'CustomerId': [1, 1, 1, 2, 2, 3, 3, 3, 3, 4] * 2,
+            'TransactionDate': dates,
+            'TransactionAmount': [100, 200, 150, 300, 250, 50, 75, 100, 125, 400] * 2
+        })
+        
+        self.calculator = RFMCalculator(
+            customer_id_col='CustomerId',
+            transaction_date_col='TransactionDate',
+            amount_col='TransactionAmount',
+            snapshot_date='2024-01-25'
+        )
+    
+    def test_calculate_rfm(self):
+        """Test RFM calculation."""
+        rfm_df = self.calculator.calculate_rfm(self.test_data)
+        
+        # Check columns
+        expected_columns = ['CustomerId', 'recency', 'frequency', 'monetary']
+        assert all(col in rfm_df.columns for col in expected_columns)
+        
+        # Check shape (should have 4 unique customers)
+        assert rfm_df.shape[0] == 4
+        
+        # Check RFM values for a specific customer
+        customer_1_data = rfm_df[rfm_df['CustomerId'] == 1]
+        
+        # Customer 1 has 6 transactions, last on 2024-01-20
+        # Recency = 5 days (from 2024-01-25 to 2024-01-20)
+        assert customer_1_data['recency'].iloc[0] == 5
+        assert customer_1_data['frequency'].iloc[0] == 6  # 3 transactions * 2 (due to duplication)
+        assert customer_1_data['monetary'].iloc[0] == (100 + 200 + 150) * 2
+    
+    def test_calculate_rfm_scores(self):
+        """Test RFM scoring."""
+        rfm_df = self.calculator.calculate_rfm(self.test_data)
+        rfm_scores = self.calculator.calculate_rfm_scores(rfm_df)
+        
+        # Check score columns
+        score_columns = ['recency_score', 'frequency_score', 'monetary_score', 'rfm_score']
+        assert all(col in rfm_scores.columns for col in score_columns)
+        
+        # Check score ranges (1-5)
+        for col in ['recency_score', 'frequency_score', 'monetary_score']:
+            assert rfm_scores[col].min() >= 1
+            assert rfm_scores[col].max() <= 5
+
+
+class TestRiskLabelGenerator:
+    """Test RiskLabelGenerator class."""
+    
+    def setup_method(self):
+        """Setup test RFM data."""
+        self.rfm_data = pd.DataFrame({
+            'CustomerId': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            'recency': [100, 50, 25, 10, 5, 200, 150, 75, 30, 15],
+            'frequency': [1, 2, 5, 10, 15, 1, 2, 3, 6, 8],
+            'monetary': [100, 500, 1000, 5000, 10000, 50, 200, 800, 2000, 4000]
+        })
+        
+        self.generator = RiskLabelGenerator(
+            n_clusters=3,
+            random_state=42
+        )
+    
+    def test_cluster_customers(self):
+        """Test customer clustering."""
+        rfm_clustered, silhouette_score = self.generator.cluster_customers(self.rfm_data)
+        
+        # Check that cluster column is added
+        assert 'cluster' in rfm_clustered.columns
+        
+        # Check cluster values
+        clusters = rfm_clustered['cluster'].unique()
+        assert len(clusters) == 3  # Should have 3 clusters
+        
+        # Silhouette score should be between -1 and 1
+        assert -1 <= silhouette_score <= 1
+    
+    def test_identify_high_risk_cluster(self):
+        """Test identification of high-risk cluster."""
+        rfm_clustered, _ = self.generator.cluster_customers(self.rfm_data)
+        high_risk_cluster = self.generator.identify_high_risk_cluster(rfm_clustered)
+        
+        # High-risk cluster should be one of the cluster IDs
+        assert high_risk_cluster in rfm_clustered['cluster'].unique()
+    
+    def test_create_risk_labels(self):
+        """Test creation of risk labels."""
+        rfm_clustered, _ = self.generator.cluster_customers(self.rfm_data)
+        rfm_labeled = self.generator.create_risk_labels(rfm_clustered)
+        
+        # Check that risk label column is added
+        assert 'is_high_risk' in rfm_labeled.columns
+        
+        # Check that risk labels are binary (0 or 1)
+        assert set(rfm_labeled['is_high_risk'].unique()).issubset({0, 1})
+        
+        # Check that exactly one cluster is marked as high risk
+        high_risk_cluster = rfm_labeled[rfm_labeled['is_high_risk'] == 1]['cluster'].unique()
+        assert len(high_risk_cluster) == 1
+
+
+def test_create_feature_pipeline():
+    """Test creation of feature pipeline."""
+    pipeline = create_feature_pipeline()
+    
+    # Check that pipeline is created
+    assert pipeline is not None
+    
+    # Check that pipeline has expected steps
+    expected_steps = ['preprocessing', 'preprocessor', 'variance_threshold']
+    for step in expected_steps:
+        assert step in pipeline.named_steps
+    
+    # Test with configuration
+    config = {
+        'datetime_col': 'TransactionDate',
+        'customer_id_col': 'CustomerId',
+        'amount_col': 'TransactionAmount',
+        'categorical_cols': ['Category'],
+        'use_woe': False
+    }
+    
+    pipeline_with_config = create_feature_pipeline(config)
+    assert pipeline_with_config is not None
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
