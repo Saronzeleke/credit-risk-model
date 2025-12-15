@@ -1,391 +1,508 @@
 """
-Model training module for FRAUD DETECTION (based on Xente Challenge data).
-Trains and evaluates models using FraudResult as target.
+Model training and tracking with MLflow.
 """
-
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-from datetime import datetime
-from typing import Dict, Tuple, List, Any
-import warnings
 import os
-import argparse
+import sys
+import warnings
+import numpy as np
+import pandas as pd
+from datetime import datetime
+from typing import Tuple, Dict, Any, Optional, List
+
+# Scikit-learn imports
+from sklearn.model_selection import train_test_split, GridSearchCV, RandomizedSearchCV
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score, f1_score,
+    roc_auc_score, confusion_matrix, classification_report,
+    roc_curve, auc
+)
+
+# Models
+from sklearn.linear_model import LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+
+# MLflow
+import mlflow
+import mlflow.sklearn
+from mlflow.models import infer_signature
+from mlflow.tracking import MlflowClient
+
+# Custom imports
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from src.data_processing import create_feature_pipeline
+
 warnings.filterwarnings('ignore')
 
-# Import sklearn components
-from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-from sklearn.model_selection import GridSearchCV
-from sklearn.metrics import (classification_report, confusion_matrix, 
-                           roc_auc_score, roc_curve, precision_recall_curve,
-                           average_precision_score, f1_score)
-import joblib
 
-
-class FraudDetectionModel:
-    """Fraud detection model trainer (replaces misleading 'CreditRiskModel')."""
+class CreditRiskModelTrainer:
+    """Train and track credit risk models."""
     
-    def __init__(self, model_type: str = 'logistic', random_state: int = 42):
-        self.model_type = model_type
-        self.random_state = random_state
-        self.model = None
-        self.best_params = None
-        self.feature_importance = None
-        self.metrics = {}
-        self.threshold = 0.5
+    def __init__(self, 
+                 experiment_name: str = "credit_risk_modeling",
+                 tracking_uri: str = "sqlite:///mlflow.db",
+                 random_state: int = 42):
+        """
+        Initialize model trainer.
         
-        self.model_configs = {
-            'logistic': {
-                'model': LogisticRegression,
-                'params': {
-                    'C': [0.01, 0.1, 1, 10, 100],
-                    'penalty': ['l2'],
-                    'solver': ['lbfgs', 'liblinear'],
-                    'max_iter': [1000],
-                    'class_weight': ['balanced', None]
-                }
+        Args:
+            experiment_name: MLflow experiment name
+            tracking_uri: MLflow tracking URI
+            random_state: Random seed for reproducibility
+        """
+        self.experiment_name = experiment_name
+        self.tracking_uri = tracking_uri
+        self.random_state = random_state
+        
+        # Setup MLflow
+        mlflow.set_tracking_uri(tracking_uri)
+        mlflow.set_experiment(experiment_name)
+        
+        # Initialize models dictionary
+        self.models = {
+            'logistic_regression': LogisticRegression(random_state=random_state),
+            'decision_tree': DecisionTreeClassifier(random_state=random_state),
+            'random_forest': RandomForestClassifier(random_state=random_state),
+            'gradient_boosting': GradientBoostingClassifier(random_state=random_state)
+        }
+        
+        # Define hyperparameter grids for each model
+        self.param_grids = {
+            'logistic_regression': {
+                'C': [0.001, 0.01, 0.1, 1, 10, 100],
+                'penalty': ['l1', 'l2'],
+                'solver': ['liblinear', 'saga'],
+                'max_iter': [100, 200, 500]
+            },
+            'decision_tree': {
+                'max_depth': [3, 5, 7, 10, None],
+                'min_samples_split': [2, 5, 10],
+                'min_samples_leaf': [1, 2, 4],
+                'criterion': ['gini', 'entropy']
             },
             'random_forest': {
-                'model': RandomForestClassifier,
-                'params': {
-                    'n_estimators': [100, 200],
-                    'max_depth': [10, 20, None],
-                    'min_samples_split': [2, 5, 10],
-                    'min_samples_leaf': [1, 2, 4],
-                    'class_weight': ['balanced', 'balanced_subsample', None],
-                    'random_state': [random_state]
-                }
+                'n_estimators': [50, 100, 200],
+                'max_depth': [5, 10, 20, None],
+                'min_samples_split': [2, 5, 10],
+                'min_samples_leaf': [1, 2, 4],
+                'bootstrap': [True, False]
             },
             'gradient_boosting': {
-                'model': GradientBoostingClassifier,
-                'params': {
-                    'n_estimators': [100, 200],
-                    'learning_rate': [0.01, 0.1, 0.2],
-                    'max_depth': [3, 5, 7],
-                    'min_samples_split': [2, 5],
-                    'min_samples_leaf': [1, 2],
-                    'subsample': [0.8, 1.0],
-                    'random_state': [random_state]
-                }
+                'n_estimators': [50, 100, 200],
+                'learning_rate': [0.01, 0.1, 0.2],
+                'max_depth': [3, 5, 7],
+                'min_samples_split': [2, 5, 10],
+                'subsample': [0.8, 0.9, 1.0]
             }
         }
-    
-    def train(self, X_train: pd.DataFrame, y_train: pd.Series, 
-              cv_folds: int = 5, n_jobs: int = -1) -> None:
-        print(f"Training {self.model_type} model...")
-        print(f"Training data shape: {X_train.shape}")
-        print(f"Class distribution: {y_train.mean():.2%} positive")
         
-        if self.model_type not in self.model_configs:
-            raise ValueError(f"Model type {self.model_type} not supported. "
-                           f"Choose from {list(self.model_configs.keys())}")
+        self.best_model = None
+        self.best_model_name = None
+        self.best_score = 0
         
-        config = self.model_configs[self.model_type]
+    def prepare_data(self, 
+                     data_path: str,
+                     target_col: str = 'is_high_risk',
+                     test_size: float = 0.2,
+                     val_size: float = 0.1) -> Tuple:
+        """
+        Prepare data for training.
         
-        # Final safety: ensure all features are numeric
-        assert X_train.dtypes.apply(lambda x: np.issubdtype(x, np.number)).all(), \
-            "FATAL: Non-numeric columns detected in X_train. Fix preprocessing."
+        Args:
+            data_path: Path to processed data
+            target_col: Name of target column
+            test_size: Proportion for test set
+            val_size: Proportion for validation set (from training set)
+            
+        Returns:
+            Tuple of (X_train, X_val, X_test, y_train, y_val, y_test)
+        """
+        # Load data
+        data = pd.read_csv(data_path)
         
-        grid_search = GridSearchCV(
-            estimator=config['model'](),
-            param_grid=config['params'],
-            cv=cv_folds,
-            scoring='roc_auc',
-            n_jobs=n_jobs,
-            verbose=1
+        # Separate features and target
+        if target_col not in data.columns:
+            raise ValueError(f"Target column '{target_col}' not found in data")
+        
+        X = data.drop(columns=[target_col])
+        y = data[target_col]
+        
+        # Handle CustomerId if present
+        if 'CustomerId' in X.columns:
+            X = X.drop(columns=['CustomerId'])
+        
+        # Train-test split
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, 
+            test_size=test_size,
+            random_state=self.random_state,
+            stratify=y
         )
         
-        grid_search.fit(X_train, y_train)
+        # Train-validation split
+        val_relative_size = val_size / (1 - test_size)
+        X_train, X_val, y_train, y_val = train_test_split(
+            X_train, y_train,
+            test_size=val_relative_size,
+            random_state=self.random_state,
+            stratify=y_train
+        )
         
-        self.model = grid_search.best_estimator_
-        self.best_params = grid_search.best_params_
+        print(f"Data shapes:")
+        print(f"  X_train: {X_train.shape}, y_train: {y_train.shape}")
+        print(f"  X_val: {X_val.shape}, y_val: {y_val.shape}")
+        print(f"  X_test: {X_test.shape}, y_test: {y_test.shape}")
         
-        print(f"Best parameters: {self.best_params}")
-        print(f"Best CV score (ROC-AUC): {grid_search.best_score_:.4f}")
-        
-        self._calculate_feature_importance(X_train)
+        return X_train, X_val, X_test, y_train, y_val, y_test
     
-    def _calculate_feature_importance(self, X_train: pd.DataFrame) -> None:
-        if hasattr(self.model, 'feature_importances_'):
-            self.feature_importance = pd.DataFrame({
-                'feature': X_train.columns,
-                'importance': self.model.feature_importances_
-            }).sort_values('importance', ascending=False)
-        elif hasattr(self.model, 'coef_'):
-            self.feature_importance = pd.DataFrame({
-                'feature': X_train.columns,
-                'importance': np.abs(self.model.coef_[0])
-            }).sort_values('importance', ascending=False)
-    
-    def evaluate(self, X_test: pd.DataFrame, y_test: pd.Series) -> Dict:
-        if self.model is None:
-            raise ValueError("Model must be trained before evaluation")
+    def evaluate_model(self, 
+                       model, 
+                       X: pd.DataFrame, 
+                       y: pd.Series,
+                       set_name: str = "validation") -> Dict[str, float]:
+        """
+        Evaluate model performance.
         
-        print(f"\nEvaluating model on test set ({X_test.shape[0]} samples)...")
+        Args:
+            model: Trained model
+            X: Features
+            y: True labels
+            set_name: Name of dataset (for logging)
+            
+        Returns:
+            Dictionary of evaluation metrics
+        """
+        # Make predictions
+        y_pred = model.predict(X)
+        y_pred_proba = model.predict_proba(X)[:, 1] if hasattr(model, 'predict_proba') else None
         
-        y_pred_proba = self.model.predict_proba(X_test)[:, 1]
-        y_pred = (y_pred_proba >= self.threshold).astype(int)
-        
-        self.metrics = {
-            'roc_auc': roc_auc_score(y_test, y_pred_proba),
-            'average_precision': average_precision_score(y_test, y_pred_proba),
-            'f1_score': f1_score(y_test, y_pred),
-            'accuracy': (y_pred == y_test).mean(),
-            'precision': precision_recall_curve(y_test, y_pred_proba)[0].mean(),
-            'recall': precision_recall_curve(y_test, y_pred_proba)[1].mean()
+        # Calculate metrics
+        metrics = {
+            f'{set_name}_accuracy': accuracy_score(y, y_pred),
+            f'{set_name}_precision': precision_score(y, y_pred, zero_division=0),
+            f'{set_name}_recall': recall_score(y, y_pred, zero_division=0),
+            f'{set_name}_f1': f1_score(y, y_pred, zero_division=0),
         }
         
-        print("\nClassification Report:")
-        print(classification_report(y_test, y_pred, 
-                                   target_names=['Legitimate', 'Fraud']))
+        # Add ROC-AUC if probability predictions are available
+        if y_pred_proba is not None:
+            metrics[f'{set_name}_roc_auc'] = roc_auc_score(y, y_pred_proba)
         
-        cm = confusion_matrix(y_test, y_pred)
-        print("\nConfusion Matrix:")
-        print(f"True Negatives: {cm[0, 0]}, False Positives: {cm[0, 1]}")
-        print(f"False Negatives: {cm[1, 0]}, True Positives: {cm[1, 1]}")
+        # Add confusion matrix
+        cm = confusion_matrix(y, y_pred)
+        metrics[f'{set_name}_tn'] = int(cm[0, 0])
+        metrics[f'{set_name}_fp'] = int(cm[0, 1])
+        metrics[f'{set_name}_fn'] = int(cm[1, 0])
+        metrics[f'{set_name}_tp'] = int(cm[1, 1])
         
-        print(f"\nKey Metrics:")
-        print(f"ROC-AUC: {self.metrics['roc_auc']:.4f}")
-        print(f"Average Precision: {self.metrics['average_precision']:.4f}")
-        print(f"F1-Score: {self.metrics['f1_score']:.4f}")
-        print(f"Accuracy: {self.metrics['accuracy']:.4f}")
-        
-        return self.metrics
+        return metrics
     
-    def plot_roc_curve(self, X_test: pd.DataFrame, y_test: pd.Series, 
-                      save_path: str = None) -> None:
-        y_pred_proba = self.model.predict_proba(X_test)[:, 1]
-        fpr, tpr, thresholds = roc_curve(y_test, y_pred_proba)
-        roc_auc = roc_auc_score(y_test, y_pred_proba)
+    def train_model(self, 
+                    model_name: str,
+                    X_train: pd.DataFrame,
+                    y_train: pd.Series,
+                    X_val: pd.DataFrame,
+                    y_val: pd.Series,
+                    use_grid_search: bool = True,
+                    cv_folds: int = 5) -> Tuple:
+        """
+        Train a single model with hyperparameter tuning.
         
-        plt.figure(figsize=(10, 8))
-        plt.plot(fpr, tpr, color='darkorange', lw=2, 
-                label=f'ROC curve (AUC = {roc_auc:.2f})')
-        plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--', 
-                label='Random')
-        plt.xlim([0.0, 1.0])
-        plt.ylim([0.0, 1.05])
-        plt.xlabel('False Positive Rate')
-        plt.ylabel('True Positive Rate')
-        plt.title(f'ROC Curve - {self.model_type.title()}')
-        plt.legend(loc="lower right")
-        plt.grid(True, alpha=0.3)
+        Args:
+            model_name: Name of model to train
+            X_train: Training features
+            y_train: Training labels
+            X_val: Validation features
+            y_val: Validation labels
+            use_grid_search: Whether to use GridSearchCV (True) or RandomizedSearchCV (False)
+            cv_folds: Number of cross-validation folds
+            
+        Returns:
+            Tuple of (trained model, best parameters, validation metrics)
+        """
+        if model_name not in self.models:
+            raise ValueError(f"Model '{model_name}' not supported")
         
-        if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-            print(f"ROC curve saved to {save_path}")
-        
-        plt.show()
+        # Start MLflow run
+        with mlflow.start_run(run_name=f"{model_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"):
+            # Log parameters
+            mlflow.log_param("model_name", model_name)
+            mlflow.log_param("random_state", self.random_state)
+            mlflow.log_param("use_grid_search", use_grid_search)
+            mlflow.log_param("cv_folds", cv_folds)
+            
+            # Get base model and parameter grid
+            model = self.models[model_name]
+            param_grid = self.param_grids[model_name]
+            
+            # Perform hyperparameter tuning
+            if use_grid_search:
+                search = GridSearchCV(
+                    estimator=model,
+                    param_grid=param_grid,
+                    cv=cv_folds,
+                    scoring='roc_auc',
+                    n_jobs=-1,
+                    verbose=1
+                )
+            else:
+                search = RandomizedSearchCV(
+                    estimator=model,
+                    param_distributions=param_grid,
+                    n_iter=20,  # Number of parameter settings sampled
+                    cv=cv_folds,
+                    scoring='roc_auc',
+                    n_jobs=-1,
+                    verbose=1,
+                    random_state=self.random_state
+                )
+            
+            # Train with cross-validation
+            print(f"\nTraining {model_name} with {'Grid' if use_grid_search else 'Randomized'} Search...")
+            search.fit(X_train, y_train)
+            
+            # Get best model
+            best_model = search.best_estimator_
+            best_params = search.best_params_
+            best_score = search.best_score_
+            
+            # Log hyperparameters
+            for param_name, param_value in best_params.items():
+                mlflow.log_param(f"best_{param_name}", param_value)
+            
+            mlflow.log_metric("best_cv_score", best_score)
+            
+            # Evaluate on validation set
+            val_metrics = self.evaluate_model(best_model, X_val, y_val, "val")
+            
+            # Log validation metrics
+            for metric_name, metric_value in val_metrics.items():
+                mlflow.log_metric(metric_name, metric_value)
+            
+            # Log model
+            mlflow.sklearn.log_model(
+                sk_model=best_model,
+                artifact_path=f"{model_name}_model",
+                signature=infer_signature(X_val, best_model.predict(X_val))
+            )
+            
+            # Log feature importance for tree-based models
+            if hasattr(best_model, 'feature_importances_'):
+                feature_importance = pd.DataFrame({
+                    'feature': X_train.columns,
+                    'importance': best_model.feature_importances_
+                }).sort_values('importance', ascending=False)
+                
+                # Save feature importance as CSV artifact
+                importance_path = f"feature_importance_{model_name}.csv"
+                feature_importance.to_csv(importance_path, index=False)
+                mlflow.log_artifact(importance_path)
+                os.remove(importance_path)  # Clean up
+            
+            print(f"Best parameters: {best_params}")
+            print(f"Best CV score: {best_score:.4f}")
+            print(f"Validation ROC-AUC: {val_metrics.get('val_roc_auc', 'N/A'):.4f}")
+            
+            return best_model, best_params, val_metrics
     
-    def plot_precision_recall_curve(self, X_test: pd.DataFrame, y_test: pd.Series,
-                                   save_path: str = None) -> None:
-        y_pred_proba = self.model.predict_proba(X_test)[:, 1]
-        precision, recall, thresholds = precision_recall_curve(y_test, y_pred_proba)
-        avg_precision = average_precision_score(y_test, y_pred_proba)
+    def train_all_models(self, 
+                         X_train: pd.DataFrame,
+                         y_train: pd.Series,
+                         X_val: pd.DataFrame,
+                         y_val: pd.Series,
+                         models_to_train: List[str] = None) -> Dict:
+        """
+        Train multiple models and compare performance.
         
-        plt.figure(figsize=(10, 8))
-        plt.plot(recall, precision, color='blue', lw=2, 
-                label=f'PR curve (AP = {avg_precision:.2f})')
-        plt.xlabel('Recall')
-        plt.ylabel('Precision')
-        plt.title(f'Precision-Recall Curve - {self.model_type.title()}')
-        plt.legend(loc="upper right")
-        plt.grid(True, alpha=0.3)
+        Args:
+            X_train: Training features
+            y_train: Training labels
+            X_val: Validation features
+            y_val: Validation labels
+            models_to_train: List of model names to train
+            
+        Returns:
+            Dictionary of trained models and their metrics
+        """
+        if models_to_train is None:
+            models_to_train = ['logistic_regression', 'random_forest']
         
-        no_skill = len(y_test[y_test==1]) / len(y_test)
-        plt.plot([0, 1], [no_skill, no_skill], linestyle='--', 
-                label='No Skill', color='red')
+        trained_models = {}
         
-        if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-            print(f"Precision-recall curve saved to {save_path}")
+        for model_name in models_to_train:
+            print(f"\n{'='*50}")
+            print(f"Training {model_name}")
+            print(f"{'='*50}")
+            
+            try:
+                model, params, metrics = self.train_model(
+                    model_name=model_name,
+                    X_train=X_train,
+                    y_train=y_train,
+                    X_val=X_val,
+                    y_val=y_val,
+                    use_grid_search=True
+                )
+                
+                trained_models[model_name] = {
+                    'model': model,
+                    'params': params,
+                    'metrics': metrics
+                }
+                
+                # Update best model
+                roc_auc = metrics.get('val_roc_auc', 0)
+                if roc_auc > self.best_score:
+                    self.best_score = roc_auc
+                    self.best_model = model
+                    self.best_model_name = model_name
+                    
+            except Exception as e:
+                print(f"Error training {model_name}: {str(e)}")
+                continue
         
-        plt.show()
+        print(f"\n{'='*50}")
+        print(f"Training Summary")
+        print(f"{'='*50}")
+        for model_name, results in trained_models.items():
+            print(f"{model_name}: ROC-AUC = {results['metrics'].get('val_roc_auc', 'N/A'):.4f}")
+        
+        print(f"\nBest model: {self.best_model_name} (ROC-AUC: {self.best_score:.4f})")
+        
+        return trained_models
     
-    def plot_feature_importance(self, top_n: int = 20, 
-                               save_path: str = None) -> None:
-        if self.feature_importance is None:
-            print("No feature importance available for this model type")
-            return
+    def evaluate_on_test(self, 
+                         X_test: pd.DataFrame,
+                         y_test: pd.Series) -> Dict[str, float]:
+        """
+        Evaluate best model on test set.
         
-        top_features = self.feature_importance.head(top_n)
+        Args:
+            X_test: Test features
+            y_test: Test labels
+            
+        Returns:
+            Test metrics
+        """
+        if self.best_model is None:
+            raise ValueError("No model has been trained yet")
         
-        plt.figure(figsize=(12, 8))
-        bars = plt.barh(range(len(top_features)), top_features['importance'].values)
-        plt.yticks(range(len(top_features)), top_features['feature'].values)
-        plt.xlabel('Importance')
-        plt.title(f'Top {top_n} Feature Importances - {self.model_type.title()}')
-        plt.gca().invert_yaxis()
+        test_metrics = self.evaluate_model(self.best_model, X_test, y_test, "test")
         
-        for i, (bar, importance) in enumerate(zip(bars, top_features['importance'].values)):
-            plt.text(importance, i, f' {importance:.4f}', 
-                    va='center', fontsize=9)
+        # Log test metrics in a new run
+        with mlflow.start_run(run_name=f"test_evaluation_{datetime.now().strftime('%Y%m%d_%H%M%S')}"):
+            mlflow.log_param("best_model", self.best_model_name)
+            mlflow.log_metric("best_val_score", self.best_score)
+            
+            for metric_name, metric_value in test_metrics.items():
+                mlflow.log_metric(metric_name, metric_value)
+            
+            # Log best model to registry
+            model_uri = f"runs:/{mlflow.active_run().info.run_id}/model"
+            mlflow.register_model(model_uri, "credit_risk_model")
         
-        plt.tight_layout()
-        
-        if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-            print(f"Feature importance plot saved to {save_path}")
-        
-        plt.show()
+        return test_metrics
     
-    def find_optimal_threshold(self, X_val: pd.DataFrame, y_val: pd.Series, 
-                              method: str = 'f1') -> float:
-        y_pred_proba = self.model.predict_proba(X_val)[:, 1]
+    def save_best_model(self, 
+                        model_path: str = "models/best_model.pkl",
+                        metadata_path: str = "models/model_metadata.json"):
+        """
+        Save the best model and its metadata.
         
-        if method == 'f1':
-            thresholds = np.arange(0.1, 0.9, 0.01)
-            f1_scores = [f1_score(y_val, (y_pred_proba >= t).astype(int)) for t in thresholds]
-            self.threshold = thresholds[np.argmax(f1_scores)]
-        elif method == 'youden':
-            fpr, tpr, thresholds = roc_curve(y_val, y_pred_proba)
-            self.threshold = thresholds[np.argmax(tpr - fpr)]
+        Args:
+            model_path: Path to save the model
+            metadata_path: Path to save model metadata
+        """
+        import joblib
+        import json
         
-        print(f"Optimal threshold ({method}): {self.threshold:.3f}")
-        return self.threshold
-    
-    def save_model(self, filepath: str) -> None:
-        if self.model is None:
-            raise ValueError("Model must be trained before saving")
+        # Create directories if they don't exist
+        os.makedirs(os.path.dirname(model_path), exist_ok=True)
+        os.makedirs(os.path.dirname(metadata_path), exist_ok=True)
         
-        model_data = {
-            'model': self.model,
-            'model_type': self.model_type,
-            'best_params': self.best_params,
-            'feature_importance': self.feature_importance,
-            'metrics': self.metrics,
-            'threshold': self.threshold,
-            'timestamp': datetime.now().isoformat()
+        # Save model
+        joblib.dump(self.best_model, model_path)
+        
+        # Save metadata
+        metadata = {
+            'model_name': self.best_model_name,
+            'best_score': self.best_score,
+            'training_date': datetime.now().isoformat(),
+            'random_state': self.random_state,
+            'model_type': type(self.best_model).__name__
         }
         
-        joblib.dump(model_data, filepath)
-        print(f"Model saved to {filepath}")
-    
-    def load_model(self, filepath: str) -> None:
-        model_data = joblib.load(filepath)
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f, indent=2)
         
-        self.model = model_data['model']
-        self.model_type = model_data['model_type']
-        self.best_params = model_data['best_params']
-        self.feature_importance = model_data['feature_importance']
-        self.metrics = model_data.get('metrics', {})
-        self.threshold = model_data.get('threshold', 0.5)
-        
-        print(f"Model loaded from {filepath}")
-        print(f"Model type: {self.model_type}")
-        print(f"Training timestamp: {model_data.get('timestamp', 'Unknown')}")
-
-
-def compare_models(X_train: pd.DataFrame, y_train: pd.Series,
-                  X_test: pd.DataFrame, y_test: pd.Series,
-                  model_types: List[str] = None) -> pd.DataFrame:
-    if model_types is None:
-        model_types = ['logistic', 'random_forest', 'gradient_boosting']
-    
-    results = []
-    
-    for model_type in model_types:
-        print(f"\n{'='*60}")
-        print(f"Training {model_type}...")
-        print('='*60)
-        
-        model = FraudDetectionModel(model_type=model_type)
-        model.train(X_train, y_train)
-        metrics = model.evaluate(X_test, y_test)
-        
-        results.append({'model_type': model_type, **metrics})
-        model.save_model(f'../models/{model_type}_model.pkl')
-        model.plot_roc_curve(X_test, y_test, f'../reports/roc_curve_{model_type}.png')
-        model.plot_precision_recall_curve(X_test, y_test, f'../reports/pr_curve_{model_type}.png')
-        model.plot_feature_importance(save_path=f'../reports/feature_importance_{model_type}.png')
-    
-    results_df = pd.DataFrame(results).sort_values('roc_auc', ascending=False)
-    
-    print(f"\n{'='*60}")
-    print("MODEL COMPARISON SUMMARY")
-    print('='*60)
-    print(results_df.to_string(index=False))
-    
-    plt.figure(figsize=(12, 6))
-    x = range(len(results_df))
-    width = 0.2
-    plt.bar([i - width for i in x], results_df['roc_auc'], width, label='ROC-AUC')
-    plt.bar([i for i in x], results_df['average_precision'], width, label='Avg Precision')
-    plt.bar([i + width for i in x], results_df['f1_score'], width, label='F1-Score')
-    plt.xlabel('Model Type')
-    plt.ylabel('Score')
-    plt.title('Model Performance Comparison')
-    plt.xticks(x, results_df['model_type'])
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.savefig(r'C:/Users/admin/credit-risk-model/reports/model_comparison.png', dpi=300, bbox_inches='tight')
-    plt.show()
-    
-    return results_df
+        print(f"Best model saved to {model_path}")
+        print(f"Metadata saved to {metadata_path}")
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Train fraud detection models')
-    parser.add_argument('--train_data', type=str, 
-                       default=r'C:\Users\admin\credit-risk-model\data\processed\train_data.csv')
-    parser.add_argument('--test_data', type=str,
-                       default=r'C:\Users\admin\credit-risk-model\data\processed\test_data.csv')
-    parser.add_argument('--model_type', type=str, default='all',
-                       choices=['logistic', 'random_forest', 'gradient_boosting', 'all'])
-    parser.add_argument('--output_dir', type=str, default=r'C:\Users\admin\credit-risk-model\models')
+    """Main training script."""
+    # Configuration
+    config = {
+        'data_path': 'data/processed/final_dataset.csv',
+        'target_col': 'is_high_risk',
+        'test_size': 0.2,
+        'val_size': 0.1,
+        'models_to_train': ['logistic_regression', 'random_forest', 'gradient_boosting'],
+        'experiment_name': 'credit_risk_v1',
+        'random_state': 42
+    }
     
-    args = parser.parse_args()
+    # Initialize trainer
+    trainer = CreditRiskModelTrainer(
+        experiment_name=config['experiment_name'],
+        random_state=config['random_state']
+    )
     
-    os.makedirs(args.output_dir, exist_ok=True)
-    os.makedirs('../reports', exist_ok=True)
+    # Prepare data
+    print("Preparing data...")
+    X_train, X_val, X_test, y_train, y_val, y_test = trainer.prepare_data(
+        data_path=config['data_path'],
+        target_col=config['target_col'],
+        test_size=config['test_size'],
+        val_size=config['val_size']
+    )
     
-    print("Loading data...")
-    train_data = pd.read_csv(args.train_data)
-    test_data = pd.read_csv(args.test_data)
+    # Train models
+    print("\nTraining models...")
+    trained_models = trainer.train_all_models(
+        X_train=X_train,
+        y_train=y_train,
+        X_val=X_val,
+        y_val=y_val,
+        models_to_train=config['models_to_train']
+    )
     
-    # 1. Use correct target: FraudResult (not high_risk)
-    target_col = 'FraudResult'
+    # Evaluate on test set
+    print("\nEvaluating best model on test set...")
+    test_metrics = trainer.evaluate_on_test(X_test, y_test)
     
-    # 2. Drop ID columns and invalid targets
-    id_cols = ['TransactionId', 'BatchId', 'AccountId', 'SubscriptionId', 'CustomerId']
-    invalid_cols = ['high_risk']  
+    print(f"\nTest Metrics:")
+    for metric_name, metric_value in test_metrics.items():
+        print(f"  {metric_name}: {metric_value:.4f}")
     
-    drop_cols = id_cols + invalid_cols
+    # Save best model
+    trainer.save_best_model(
+        model_path="models/best_model.pkl",
+        metadata_path="models/model_metadata.json"
+    )
     
-    X_train = train_data.drop(columns=drop_cols + [target_col], errors='ignore')
-    y_train = train_data[target_col]
-    X_test = test_data.drop(columns=drop_cols + [target_col], errors='ignore')
-    y_test = test_data[target_col]
+    # Generate classification report
+    y_pred = trainer.best_model.predict(X_test)
+    print(f"\nClassification Report:")
+    print(classification_report(y_test, y_pred))
     
-    # 3. Ensure all features are numeric (final safety net)
-    numeric_cols = X_train.select_dtypes(include=[np.number]).columns
-    X_train = X_train[numeric_cols]
-    X_test = X_test[numeric_cols]
-    
-    print(f"Training data: {X_train.shape}")
-    print(f"Test data: {X_test.shape}")
-    print(f"Class distribution - Train: {y_train.mean():.2%}, Test: {y_test.mean():.2%}")
-    
-    if args.model_type == 'all':
-        model_types = ['logistic', 'random_forest', 'gradient_boosting']
-        results = compare_models(X_train, y_train, X_test, y_test, model_types)
-        results.to_csv(r'C:\Users\admin\credit-risk-model\reports\model_comparison.csv', index=False)
-        best_model = results.iloc[0]['model_type']
-        print(f"\nBest model: {best_model} (ROC-AUC: {results.iloc[0]['roc_auc']:.4f})")
-    else:
-        model = FraudDetectionModel(model_type=args.model_type)
-        model.train(X_train, y_train)
-        model.evaluate(X_test, y_test)
-        model.save_model(f'{args.output_dir}/{args.model_type}_model.pkl')
-        model.plot_roc_curve(X_test, y_test, f'../reports/roc_curve_{args.model_type}.png')
-        model.plot_precision_recall_curve(X_test, y_test, f'../reports/pr_curve_{args.model_type}.png')
-        model.plot_feature_importance(save_path=f'../reports/feature_importance_{args.model_type}.png')
-    
-    print("\n✅ Training completed successfully!")
+    # Confusion matrix
+    cm = confusion_matrix(y_test, y_pred)
+    print(f"\nConfusion Matrix:")
+    print(f"[[TN={cm[0,0]} FP={cm[0,1]}]")
+    print(f" [FN={cm[1,0]} TP={cm[1,1]}]]")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
