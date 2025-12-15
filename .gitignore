@@ -1,21 +1,8 @@
 # Data
-data/raw/
-data/processed/
-data/*.csv
-data/*.parquet
-data/*.json
-
-# Models
-models/
-*.pkl
-*.joblib
-*.h5
-*.pth
-
-# MLflow
-mlflow/
-mlruns/
-mlflow.db
+data/
+*.csv
+*.parquet
+*.feather
 
 # Python
 __pycache__/
@@ -40,10 +27,8 @@ wheels/
 *.egg
 
 # Virtual Environment
-.env
-.venv
 my_venv/
-venv/
+env/
 ENV/
 env.bak/
 venv.bak/
@@ -53,45 +38,29 @@ venv.bak/
 .idea/
 *.swp
 *.swo
+*~
 
-# OS
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# MLflow
+mlruns/
+
+# Models
+models/*.pkl
+models/*.joblib
 
 # Logs
 logs/
 *.log
-*.log.*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Coverage
+.coverage
+coverage.xml
 
 # Test
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-.hypothesis/
 .pytest_cache/
-
-# Jupyter
-.ipynb_checkpoints
-*.ipynb
-
-# Docker
-.dockerignore
-docker-compose.override.yml
-
-# Secrets
-*.env
-*.pem
-*.key
-*.crt
-
-# Temporary files
-tmp/
-temp/
