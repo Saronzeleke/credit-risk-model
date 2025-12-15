@@ -24,11 +24,13 @@ def load_and_prepare_data(data_path):
     # Generate target
     target_df = create_proxy_target(df, snapshot_date=None)
 
-    # Ensure CustomerId exists and match types
+    # Ensure CustomerId exists
     if "CustomerId" not in df.columns:
         df["CustomerId"] = df.index
-    df["CustomerId"] = df["CustomerId"].astype(int)
-    target_df["CustomerId"] = target_df["CustomerId"].astype(int)
+
+    # Convert CustomerId to integer safely
+    df["CustomerId"] = df["CustomerId"].astype(str).str.extract(r'(\d+)').astype(int)
+    target_df["CustomerId"] = target_df["CustomerId"].astype(str).str.extract(r'(\d+)').astype(int)
 
     # Merge and drop missing target
     df = df.merge(target_df, on="CustomerId", how="left")
@@ -38,6 +40,7 @@ def load_and_prepare_data(data_path):
     y = df["is_high_risk"]
 
     return X, y
+
 
 def train_models(X, y):
     mlflow.set_tracking_uri("file:///mlruns")
