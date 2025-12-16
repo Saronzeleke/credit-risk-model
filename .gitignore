@@ -1,14 +1,14 @@
 # Data
 data/
-!data/raw/.gitkeep
-!data/processed/.gitkeep
+*.csv
+*.parquet
+*.feather
 
-# Byte-compiled / optimized / DLL files
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
-
-# Distribution / packaging
+*.so
 .Python
 build/
 develop-eggs/
@@ -23,22 +23,32 @@ sdist/
 var/
 wheels/
 *.egg-info/
+.installed.cfg
+*.egg
 
 # Virtual Environment
-.env
-.venv
-env/
-venv/
-ENV/
 my_venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
 
-# Jupyter
-.ipynb_checkpoints/
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# MLflow
+mlruns/
+
+# Models
+models/*.pkl
+models/*.joblib
 
 # Logs
 logs/
@@ -48,6 +58,9 @@ logs/
 .DS_Store
 Thumbs.db
 
-# Temporary files
-*.tmp
-*.temp
+# Coverage
+.coverage
+coverage.xml
+
+# Test
+.pytest_cache/
