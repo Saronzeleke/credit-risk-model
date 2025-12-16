@@ -1,29 +1,27 @@
-version: '3.8'
 
 services:
-  api:
+  credit-risk-api:
     build: .
+    container_name: credit-risk-api
     ports:
       - "8000:8000"
-    environment:
-      - ENVIRONMENT=production
-      - LOG_LEVEL=INFO
     volumes:
-      - ./data:/app/data
+      - ./mlruns:/app/mlruns
       - ./models:/app/models
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  mlflow:
-    image: ghcr.io/mlflow/mlflow:latest
+      - ./data:/app/data
+    environment:
+      - MLFLOW_TRACKING_URI=file:///app/mlruns
+      - PYTHONPATH=/app
+    command: uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
+    
+  mlflow-ui:
+    image: python:3.9-slim
+    container_name: mlflow-ui
     ports:
       - "5000:5000"
-    command: mlflow server --backend-store-uri sqlite:///mlflow.db --default-artifact-root /mlflow-artifacts --host 0.0.0.0
     volumes:
-      - ./mlflow:/mlflow-artifacts
-    environment:
-      - MLFLOW_TRACKING_URI=http://localhost:5000
+      - ./mlruns:/mlruns
+    working_dir: /app
+    command: >
+      sh -c "pip install mlflow &&
+             mlflow server --host 0.0.0.0 --port 5000 --backend-store-uri file:///mlruns"

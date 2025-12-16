@@ -24,3 +24,16 @@ pre-commit>=3.0.0
 
 # Optional for better performance
 joblib>=1.2.0
+# Add to existing requirements.txt
+mlflow>=2.0.0
+pytest>=7.0.0
+pytest-cov>=4.0.0
+# Add to existing requirements
+fastapi>=0.104.0
+uvicorn>=0.24.0
+pydantic>=2.0.0
+python-multipart>=0.0.6
+flake8>=6.0.0
+black>=23.0.0
+pre-commit>=3.0.0
+joblib>=1.2.0

@@ -1,3 +1,4 @@
+# Dockerfile
 FROM python:3.9-slim
 
 WORKDIR /app
@@ -13,17 +14,16 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY . .
+COPY src/ ./src/
+COPY tests/ ./tests/
+COPY models/ ./models/  # If you have pre-trained models
+COPY data/ ./data/
 
-# Create non-root user
-RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
-USER appuser
+# Create necessary directories
+RUN mkdir -p mlruns
 
-# Expose API port
+# Expose port
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK CMD curl --fail http://localhost:8000/health || exit 1
-
-# Run the application
+# Command to run the application
 CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
