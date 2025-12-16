@@ -171,3 +171,6 @@ if __name__ == "__main__":
 
     print(f"Final dataset shape: {final_df.shape}")
     print(f"Target distribution:\n{final_df['is_high_risk'].value_counts(normalize=True)}")
+
+    print(f"Target distribution:\n{final_df['is_high_risk'].value_counts(normalize=True)}")
+
