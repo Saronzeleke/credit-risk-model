@@ -36,8 +36,18 @@ def train_models(
     mlflow_cfg = cfg['mlflow']
     
     # Set up MLflow
-    mlflow.set_experiment(mlflow_cfg['experiment_name'])
-    mlflow.set_tracking_uri(mlflow_cfg['tracking_uri'])
+    # mlflow.set_experiment(mlflow_cfg['experiment_name'])
+    # mlflow.set_tracking_uri(mlflow_cfg['tracking_uri'])
+    import mlflow
+    from pathlib import Path
+
+    # Ensure MLflow uses a local tracking folder in the project
+    mlruns_path = Path(__file__).parent.parent / "mlruns"
+    mlflow.set_tracking_uri(f"file://{mlruns_path.resolve()}")
+
+    # Set experiment name and auto-create if missing
+    experiment_name = "credit_risk_model"  # or from your config
+    mlflow.set_experiment(experiment_name)
 
     # Load and preprocess data
     print("Loading and preprocessing data...")
@@ -160,7 +170,9 @@ def train_models(
         for name, (model, _) in models_results.items():
             pred_proba = model.predict_proba(X_test)[:, 1]
             fpr, tpr, _ = roc_curve(y_test, pred_proba)
-            plt.plot(fpr, tpr, label=f"{name} (AUC={metrics_lr['auc']:.3f})")
+            auc_value = metrics.get('auc')  # from each model
+            plt.plot(fpr, tpr, label=f"{name} (AUC={auc_value:.3f})")
+
         
         plt.plot([0, 1], [0, 1], 'k--', label='Random')
         plt.xlabel('False Positive Rate')
