@@ -83,7 +83,7 @@ def train_models(
         
         # Save model
         mlflow.sklearn.log_model(lr_grid, "logistic_model")
-        joblib.dump(lr_grid, "models/logistic_model.joblib")
+        joblib.dump(lr_grid, "models/logistic_models.joblib")
         models_results['logistic'] = (lr_grid, metrics_lr)
         
         print(f"Logistic Regression AUC: {metrics_lr['auc']:.4f}")
@@ -167,7 +167,7 @@ def train_models(
         plt.ylabel('True Positive Rate')
         plt.title('ROC Curves')
         plt.legend()
-        plt.savefig('reports/roc_curves.png')
+        plt.savefig('reports/roc_curvess.png')
         plt.close()
         
         print(f"\nBest model: {best_model_name} with AUC: {models_results[best_model_name][1]['auc']:.4f}")
