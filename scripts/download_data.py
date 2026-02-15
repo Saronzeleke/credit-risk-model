@@ -2,7 +2,9 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from datetime import datetime, timedelta
-
+import os 
+if not os.path.exists('data/raw'):
+    os.makedirs('data/raw')
 def generate_synthetic_transactions(n_rows=1000, output_path="data/raw/transactions.csv"):
     """Generate synthetic data matching your column schema for testing."""
     np.random.seed(42)
