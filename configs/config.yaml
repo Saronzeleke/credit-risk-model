@@ -19,8 +19,8 @@ models:
     max_depth: [3, 5]
 
 mlflow:
-  experiment_name: "credit_risk_model"
-  tracking_uri: "mlruns"
+   experiment_name: "credit_risk_model"
+   tracking_uri: "file:./mlruns"
 
 paths:
   raw_data: "data/raw/transactions.csv"

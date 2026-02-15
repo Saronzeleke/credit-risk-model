@@ -104,7 +104,9 @@ if __name__ == "__main__":
     
     print("Loading data and model...")
     _, _, X_test, y_test, feature_names, pipeline = preprocess_and_split()
-    model = joblib.load("models/best_model.joblib")
+    pipeline = joblib.load(r"C:\Users\admin\credit-risk-model\models\data_pipeline.pkl")
+    model = joblib.load(r"C:\Users\admin\credit-risk-model\models\gradient_boosting_model.pkl")
+
     
     print("Computing SHAP values...")
     explainer, shap_values = compute_shap_values(model, X_test, feature_names)
