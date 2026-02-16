@@ -3,7 +3,7 @@ data/
 *.csv
 *.parquet
 *.feather
-
+predictions/
 # Python
 __pycache__/
 *.py[cod]
