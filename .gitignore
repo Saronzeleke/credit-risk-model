@@ -4,6 +4,7 @@ data/
 *.parquet
 *.feather
 predictions/
+models/
 # Python
 __pycache__/
 *.py[cod]
