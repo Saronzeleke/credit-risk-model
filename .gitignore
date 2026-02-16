@@ -1,10 +1,15 @@
+#models
+*.pkl
+models/
+reports/*.pkl
+
 # Data
 data/
 *.csv
 *.parquet
 *.feather
 predictions/
-models/
+
 # Python
 __pycache__/
 *.py[cod]
