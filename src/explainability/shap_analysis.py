@@ -16,7 +16,7 @@ import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Paths - FIXED to use your existing data
+# Paths
 MODELS_DIR = r"C:\Users\admin\credit-risk-model\models"
 PROCESSED_DATA_DIR = r"C:\Users\admin\credit-risk-model\data\processed"
 REPORTS_DIR = r"C:\Users\admin\credit-risk-model\reports"
@@ -30,7 +30,7 @@ def load_test_data() -> Tuple[pd.DataFrame, pd.Series, List[str]]:
     Load processed test data and feature names.
     
     Returns:
-        X_test: Test features
+        X_test: Test features (numeric only)
         y_test: Test labels
         feature_names: List of feature names
     """
@@ -38,13 +38,28 @@ def load_test_data() -> Tuple[pd.DataFrame, pd.Series, List[str]]:
         X_test = pd.read_csv(os.path.join(PROCESSED_DATA_DIR, "X_test.csv"))
         y_test = pd.read_csv(os.path.join(PROCESSED_DATA_DIR, "y_test.csv")).squeeze()
         
-        # Get feature names (exclude ID columns if present)
+        # 🔥 FIX: Keep only numeric columns (drop ID columns)
+        id_columns = ['TransactionId', 'BatchId', 'AccountId', 'SubscriptionId', 
+                      'CustomerId', 'ProductId']
+        
+        # Drop ID columns if they exist
+        cols_to_drop = [col for col in id_columns if col in X_test.columns]
+        if cols_to_drop:
+            X_test = X_test.drop(columns=cols_to_drop)
+            logger.info(f"Dropped ID columns: {cols_to_drop}")
+        
+        # Keep only numeric columns
+        X_test = X_test.select_dtypes(include=[np.number])
+        
+        # Get feature names
         feature_names = X_test.columns.tolist()
         
         logger.info(f"✅ Loaded test data: {X_test.shape}")
-        logger.info(f"✅ Features: {len(feature_names)}")
+        logger.info(f"✅ Numeric features: {len(feature_names)}")
+        logger.info(f"✅ Features: {feature_names[:10]}...")  # Show first 10
         
         return X_test, y_test, feature_names
+        
     except FileNotFoundError as e:
         logger.error(f"❌ Test data not found: {e}")
         logger.info("Please ensure X_test.csv and y_test.csv exist in data/processed/")
@@ -99,7 +114,7 @@ def compute_shap_values(
     
     Args:
         model: Trained model
-        X: Feature matrix
+        X: Feature matrix (numeric only)
         sample_size: Number of samples to use
     
     Returns:
@@ -107,30 +122,35 @@ def compute_shap_values(
         shap_values: Computed SHAP values
         X_sample: Sampled data used
     """
+    # 🔥 FIX: Ensure X is numeric
+    X = X.select_dtypes(include=[np.number])
+    
     # Sample data for efficiency
     X_sample = X.sample(min(sample_size, len(X)), random_state=42)
+    
+    # 🔥 FIX: Convert to float32 for XGBoost
+    X_sample_float = X_sample.astype(np.float32)
     
     logger.info(f"Computing SHAP values on {len(X_sample)} samples...")
     
     try:
         # Choose appropriate explainer based on model type
         if hasattr(model, 'coef_'):  # Linear models
-            explainer = shap.LinearExplainer(model, X_sample)
-        elif hasattr(model, 'estimators_'):  # Tree-based
-            explainer = shap.TreeExplainer(model)
-        elif str(type(model)).lower().find('xgboost') > -1:  # XGBoost
-            # Convert to float32 for XGBoost
-            X_sample_float = X_sample.astype(np.float32)
+            explainer = shap.LinearExplainer(model, X_sample_float)
+            shap_values = explainer.shap_values(X_sample_float)
+            
+        elif hasattr(model, 'estimators_'):  # Tree-based (Random Forest, Gradient Boosting)
             explainer = shap.TreeExplainer(model)
             shap_values = explainer.shap_values(X_sample_float)
+            
+        elif 'xgboost' in str(type(model)).lower():  # XGBoost
+            explainer = shap.TreeExplainer(model)
+            shap_values = explainer.shap_values(X_sample_float)
+            
         else:
             # Fallback to Kernel explainer
-            explainer = shap.KernelExplainer(model.predict_proba, X_sample)
-            shap_values = explainer.shap_values(X_sample)
-        
-        # Get shap_values if not already set
-        if 'shap_values' not in locals():
-            shap_values = explainer.shap_values(X_sample)
+            explainer = shap.KernelExplainer(model.predict_proba, X_sample_float)
+            shap_values = explainer.shap_values(X_sample_float)
         
         # Handle binary classification output
         if isinstance(shap_values, list) and len(shap_values) == 2:
@@ -196,76 +216,21 @@ def plot_shap_waterfall(
 ) -> None:
     """Plot waterfall plot for a single prediction."""
     plt.figure(figsize=(12, 6))
-    shap.waterfall_plot(
-        shap.Explanation(
-            values=shap_values[index],
-            base_values=0,
-            data=X_sample.iloc[index].values,
-            feature_names=X_sample.columns.tolist()
-        ),
-        show=False
+    
+    # Create explanation object
+    exp = shap.Explanation(
+        values=shap_values[index],
+        base_values=0,
+        data=X_sample.iloc[index].values,
+        feature_names=X_sample.columns.tolist()
     )
+    
+    shap.waterfall_plot(exp, show=False)
+    
     if output_path:
         plt.savefig(output_path, dpi=150, bbox_inches='tight')
     plt.close()
     logger.info(f"✅ Waterfall plot generated")
-
-
-def analyze_all_models() -> pd.DataFrame:
-    """
-    Run SHAP analysis on all models and compare.
-    
-    Returns:
-        DataFrame with model comparison
-    """
-    models = ['xgboost', 'random_forest', 'gradient_boosting', 'logistic']
-    results = []
-    
-    X_test, y_test, feature_names = load_test_data()
-    
-    for model_name in models:
-        try:
-            logger.info(f"\n{'='*60}")
-            logger.info(f"Analyzing {model_name.upper()}")
-            logger.info(f"{'='*60}")
-            
-            model = load_model(model_name)
-            
-            # Compute SHAP
-            explainer, shap_values, X_sample = compute_shap_values(model, X_test)
-            
-            # Generate plots
-            plot_shap_summary(
-                shap_values, 
-                X_sample,
-                os.path.join(REPORTS_DIR, f"shap_summary_{model_name}.png")
-            )
-            plot_shap_bar(
-                shap_values,
-                X_sample,
-                os.path.join(REPORTS_DIR, f"shap_bar_{model_name}.png")
-            )
-            
-            # Save SHAP values for later use
-            shap_df = pd.DataFrame(
-                shap_values,
-                columns=X_sample.columns,
-                index=X_sample.index
-            )
-            shap_df.to_csv(os.path.join(REPORTS_DIR, f"shap_values_{model_name}.csv"))
-            
-            # Store results
-            results.append({
-                'model': model_name,
-                'shap_mean': np.abs(shap_values).mean(),
-                'shap_max': np.abs(shap_values).max(),
-                'top_feature': X_sample.columns[np.abs(shap_values).mean(axis=0).argmax()]
-            })
-            
-        except Exception as e:
-            logger.error(f"Error analyzing {model_name}: {e}")
-    
-    return pd.DataFrame(results)
 
 
 def main():
@@ -274,13 +239,13 @@ def main():
     print("SHAP ANALYSIS FOR CREDIT RISK MODELS")
     print("="*60)
     
-    # Option 1: Analyze a specific model
-    model_name = 'xgboost'  # Change to your preferred model
+    # Choose model: 'xgboost', 'random_forest', 'gradient_boosting', or 'logistic'
+    model_name = 'xgboost'  # Change this to analyze different models
     
     print(f"\n📊 Analyzing {model_name.upper()} model...")
     
     try:
-        # Load data
+        # Load data (automatically drops ID columns)
         X_test, y_test, feature_names = load_test_data()
         
         # Load model
