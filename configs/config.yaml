@@ -23,6 +23,13 @@ models:
     learning_rate: [0.05, 0.1, 0.2]
     max_depth: [3, 5]
 
+  xgboost:                       # <-- Moved inside 'models'
+    n_estimators: [200, 500]
+    max_depth: [3, 5, 7]
+    learning_rate: [0.01, 0.05, 0.1]
+    subsample: [0.8, 1.0]
+    colsample_bytree: [0.8, 1.0]
+
 mlflow:
   experiment_name: "credit_risk_model"
   tracking_uri: "file:./mlruns"
@@ -32,9 +39,3 @@ paths:
   processed_data: "data/processed/"
   models: "models/"
   reports: "reports/"
-xgboost:
-    n_estimators: [200, 500]
-    max_depth: [3, 5, 7]
-    learning_rate: [0.01, 0.05, 0.1]
-    subsample: [0.8, 1.0]
-    colsample_bytree: [0.8, 1.0]
