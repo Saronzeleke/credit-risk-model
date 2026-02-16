@@ -8,7 +8,7 @@ pipeline:
 
 models:
   logistic:
-    max_iter: 1000
+    max_iter: [1000]
     solver: "liblinear"
     penalty: "l2"
     C: [0.01, 0.1, 1, 10]
