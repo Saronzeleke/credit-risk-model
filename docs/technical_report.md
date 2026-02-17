@@ -5,7 +5,7 @@
 **Author**: Saron Zeleke
 
 ## 1. System Architecture
-
+```
 ┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
 │   Data Layer    │──▶│   Model Layer   │──▶│   Deployment    │
 │  - Raw Data     │   │  - XGBoost      │   │  - FastAPI      │
@@ -20,7 +20,7 @@
 │  - Feature eng  │   │  - CV=5         │   │  - Metrics      │
 │  - Scaling      │   │  - MLflow logs  │   │  - Reports      │
 └─────────────────┘   └─────────────────┘   └─────────────────┘
-
+```
 ## 2. Data Processing Pipeline
 
 ### 2.1 RFM Target Creation
@@ -64,9 +64,8 @@ High-risk rate: 11.5% (balanced enough)
 ## 3. Model Training
 
 **3.1 Model Configurations**
-
+```
 XGBoost (Best Model)
-
 params:
   n_estimators: 500
   max_depth: 7
@@ -90,7 +89,7 @@ params:
   max_depth: 5
   learning_rate: 0.2
   random_state: 42
-  
+```
 **3.2 Training Pipeline**
 
 # 5-fold Stratified Cross-Validation
@@ -98,7 +97,7 @@ params:
 cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
 # GridSearchCV with scoring='roc_auc'
-
+```
 grid_search = GridSearchCV(
     estimator=model_class(),
     param_grid=config,
@@ -107,7 +106,7 @@ grid_search = GridSearchCV(
     n_jobs=-1,
     verbose=1
 )
-
+```
 **3.3 Performance Metrics**
 
 | Model             | ROC-AUC | Precision | Recall | F1-Score |
@@ -163,7 +162,7 @@ Feature interactions captured
 **5.1 Endpoints**
 
 POST /predict
-
+```
 Request Schema:
 
 {
@@ -189,7 +188,7 @@ Response Schema:
   "threshold_used": "float",
   "timestamp": "string (ISO datetime)"
 }
-
+```
 **5.2 Performance**
 
 Response time: <100ms
@@ -249,14 +248,14 @@ LOG_LEVEL=INFO
 ## 8. Testing Strategy
 
 **8.1 Unit Tests**
-
+```
 def test_data_loading():
     assert X_train.shape[0] == 76529
     
 def test_model_prediction():
     prob = model.predict_proba(X_test)[0,1]
     assert 0 <= prob <= 1
-
+```
 **8.2 Integration Tests**
 
  API endpoint testing
@@ -344,11 +343,11 @@ Credit Risk Modeling Best Practices
 
 
 **C.Model Files**
-
+```
 models/
 ├── xgboost_model.pkl          # 87.3% ROC-AUC
 ├── random_forest_model.pkl    # 86.8% ROC-AUC
 ├── gradient_boosting_model.pkl # 86.5% ROC-AUC
 └── logistic_model.pkl         # 75.8% ROC-AUC
-
+```
 **D.Configuration File (configs/config.yaml)**
