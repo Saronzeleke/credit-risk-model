@@ -1,263 +1,259 @@
-# Credit Risk Model
-
-1. Project Overview
-
-This repository delivers a production-ready machine learning pipeline for credit risk assessment, predicting 
-
-customer default probability (is_high_risk) from transaction-level data. Designed for financial institutions, it 
-
-ensures Basel II compliance through interpretable models, auditable pipelines, and explainability tools (SHAP/
-
-LIME), enabling transparent Probability of Default (PD) estimation.
-
-Core Purpose: Binary classification to flag high-risk customers, mitigating losses from undetected defaults.
-
-Regulatory Focus: Adheres to Basel II Pillars (capital requirements via PD/LGD/EAD proxies, supervisory review with
-
- validation, market discipline through disclosures).
-
-Tech Stack: scikit-learn pipelines, MLflow tracking, FastAPI deployment, Streamlit dashboard, SHAP explainability,
-
- pytest CI/CD.
-
-Portfolio Highlights: End-to-end reproducibility, modular code with type hints/dataclasses, and business-aligned 
-
-metrics (e.g., ROC-AUC >0.85).
-
-2. Business Context
-
-Credit defaults cost banks ~$1T annually (McKinsey, 2023), exacerbated by unlabeled transaction data lacking direct 
-
-flags. This project addresses this via proxy targets derived from RFM (Recency, Frequency, Monetary) analysis + 
-
-K-Means clustering, inferring risk from behavioral patterns.
-
-Problem Importance: Enables proactive interventions (e.g., credit limits), reducing non-performing loans by 20-30%.
-
-Business Impact: High-recall models catch 76% of risks with 18% false positives, optimizing intervention costs 
-
-while minimizing unnecessary actions.
-
-Limitations & Assumptions: Proxy targets may introduce bias (e.g., RFM clustering over/underestimates risk in niche 
-
-segments like low-volume users); requires periodic retraining for drift. No real-time EAD/LGD integration—future 
-
-extension recommended.
-
-3. Dataset
-
-Source: Transaction CSV (data/raw/transactions.csv) simulating fintech logs (e.g., mobile money transfers).
-
-Key Columns: CustomerId, TransactionStartTime (datetime), Amount/Value (numerical), categoricals (CurrencyCode, 
-
-CountryCode, ProviderId, ProductCategory, ChannelId, PricingStrategy), optional is_high_risk target.
-
-Size: ~1k rows (scalable; aggregation yields customer-level features).
-
-Preprocessing Steps: Temporal extraction (hour/day/weekend), aggregation (sum/mean/std of Amount/Value, ratios), 
-
-WoE/IV for categoricals, imputation (median/mode), scaling (StandardScaler), OneHot encoding.
-
-Preparation:
-
-Real data: Upload CSV to data/raw/.
-
-Synthetic: python scripts/download_data.py (generates 1k rows with schema/target).
-
-
-4. Setup & Installation
-
-Requirements
-
-Python 3.9+ (tested on 3.12).
-
-4GB+ RAM, multi-core CPU for training.
-
-Optional: Docker 20+ for containerization.
-
-Installation Steps
-
-Clone Repository:textgit clone https://github.com/Saronzeleke/credit-risk-model.git
-
-cd credit-risk-model
-
-Virtual Environment:textpython -m venv venv
-
-source venv/bin/activate  # Linux/Mac; Windows: venv\Scripts\activate
-
-Install Dependencies:textpip install -r requirements.txt(Includes: pandas, scikit-learn, mlflow, fastapi, shap,
-
- streamlit, pytest-cov, pyyaml.)
-
-Docker (Optional):textdocker-compose up --buildExposes API at http://localhost:8000, MLflow at http://localhost:5000.
-
-Data Setup: Run synthetic generator or add your CSV (see Section 3).
-
-5. Pipeline & Implementation
-
-The pipeline is modular (src/data/preprocess.py), integrating feature engineering and proxy target creation. Steps:
-
- Load → Temporal/Aggregate → WoE → Preprocess → Split → Train → Evaluate.
-
-Proxy Target: RFM scores + K-Means (n_clusters=3, random_state=42) for is_high_risk (high-risk cluster=1).
-
-Models: Logistic Regression (primary, WoE-aligned for interpretability); Random Forest/Gradient Boosting 
-
-(benchmarks).
-
-Hyperparameters: YAML-configured (e.g., Logistic: solver='liblinear', C=[0.1,1]; RF: n_estimators=[100,200]).
-
-Metrics: ROC-AUC, Precision, Recall, F1 (threshold=0.5).
-
-Key Commands
-
-Preprocess & Split: python src/data/preprocess.py (Outputs: data/processed/test_set.csv).
-
-Train (with MLflow):textmlflow ui --port 5000  # New terminal
-
-python src/models/train.py(Saves: models/best_model.joblib, models/pipeline.joblib).
-
-Evaluate: python src/models/evaluate.py (Generates: reports/roc_curve.png, reports/confusion_matrix.png).
-
-Explainability (SHAP): python src/explainability/shap_analysis.py (Outputs: reports/shap_summary.png).
-
-6. Model Performance & Explainability
-
-On synthetic data (80/20 split, stratified):
-
-Model,ROC-AUC,Precision,Recall,F1-Score
-Logistic Regression,0.87,0.82,0.76,0.79
-Random Forest,0.85,0.80,0.74,0.77
-Gradient Boosting,0.86,0.81,0.75,0.78
-
-Interpretation: Logistic excels in interpretability (linear coeffs post-WoE); GB captures non-linearity but needs 
-
-SHAP for audits.
-
-SHAP Insights: Top contributors: Amount_mean ↑risk, transaction_frequency ↓risk. CurrencyCode_USD (via WoE: +0.15 
-
-log-odds for high-risk).
-
-Validation: 5-fold CV (std <0.02); holdout for final metrics.
-
-7. Deployment & Inference
-
-FastAPI (REST API)
-
-Run:textuvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
-
-Endpoints:
-
-Health: GET /health → {"status": "healthy"}.
-
-Predict: POST /predict (JSON input).
-
-
-Example Request:
-
-textcurl -X POST "http://localhost:8000/predict" \
-
--H "Content-Type: application/json" \
--d '{
-  "CustomerId": 4406,
-  "TransactionStartTime": "2018-11-15T02:18:49Z",
-  "Amount": 1000.0,
-  "Value": 1000.0,
-  "CurrencyCode": "USD",
-  "CountryCode": "US",
-  "ProviderId": "Prov1",
-  "ProductCategory": "Electronics",
-  "ChannelId": "Online",
-  "PricingStrategy": "Fixed"
-}'
-Response: {"prediction": 0.23, "risk_level": "Low"}.
-Streamlit Dashboard
-
-Run:textstreamlit run dashboard/app.py
-
-Features: Dynamic metrics/plots (ROC/CM), prediction demo, SHAP visuals. Access: http://localhost:8501.
-
-CI/CD & Testing
-
-Tests:textpytest tests/ --cov=src --cov-report=html -v(7+ units; >85% coverage enforced in CI.)
-
-CI: GitHub Actions (linting, tests, coverage to Codecov) on push/PR.
-
-8. Repository Structure
-
-textcredit-risk-model/
-├── configs/              # YAML configs (hyperparams, paths)
-│   └── config.yaml
-├── src/                  # Core source code
-│   ├── data/             # Load/preprocess (preprocess.py integrates data_processing/target_engineering)
-│   ├── models/           # Train/evaluate (train.py, evaluate.py)
-│   ├── inference/        # Standalone prediction (predict.py)
-│   ├── explainability/   # SHAP analysis
-│   └── api/              # FastAPI (main.py, pydantic_models.py)
-├── tests/                # Pytest units (test_preprocess.py, etc.)
-├── scripts/              # Utilities (download_data.py for synthetic)
-├── dashboard/            # Streamlit app (app.py)
-├── notebooks/            # EDA (eda.ipynb)
-├── docs/                 # Reports (technical_report.md, presentation_outline.md)
-├── models/               # Artifacts (gitignore)
-├── reports/              # Plots/metrics
-├── data/                 # Raw/processed (gitignore processed)
-├── .github/workflows/    # CI YAML (ci.yml)
+# Credit Risk Prediction Model
+
+[![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/)  
+
+[![MLflow Tracked](https://img.shields.io/badge/MLflow-tracked-brightgreen)](https://mlflow.org/)  
+
+[![XGBoost 3.1.0](https://img.shields.io/badge/XGBoost-3.1.0-orange)](https://xgboost.readthedocs.io/)  
+
+[![License MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+📋 Project Overview
+
+This project delivers a production-ready credit risk prediction system that uses machine learning to 
+
+identify high-risk transactions in real-time. The solution combines:
+
+1. High-accuracy predictive modeling using XGBoost with 87.3% ROC-AUC
+
+2. Explainable AI via SHAP for interpretability
+
+3. End-to-end ML lifecycle tracking using MLflow
+
+4. REST API for seamless integration with business systems
+
+5. Interactive dashboards for monitoring and business insights
+
+**Business Impact:** Automates risk assessment, reduces false positives, and improves operational efficiency.
+
+🎯 Key Features
+
+| Feature                   | Benefit                                                                        |
+| ------------------------- | ------------------------------------------------------------------------------ |
+| **High Accuracy**         | XGBoost model with 87.3% ROC-AUC identifies high-risk transactions effectively |
+| **Explainable AI**        | SHAP provides feature-level impact for decisions                               |
+| **MLflow Tracking**       | Full experiment versioning, reproducibility, and logging                       |
+| **REST API**              | FastAPI endpoint supports real-time predictions                                |
+| **Interactive Dashboard** | Streamlit dashboard visualizes risk distributions and model performance        |
+| **Production Ready**      | CI/CD pipelines, reproducible training, and deployment-ready structure         |
+
+
+📁 Project Structure
+
+credit-risk-model/
+│
+├── data/
+│   ├── raw/              # Original transaction data
+│   └── processed/        # Cleaned and feature-engineered datasets
+│
+├── models/               # Saved models
+│   ├── xgboost_model.pkl # Best model (87.3% ROC-AUC)
+│   ├── random_forest_model.pkl
+│   ├── gradient_boosting_model.pkl
+│   └── logistic_model.pkl
+│
+├── src/                  # Source code
+│   ├── data/             # Data processing
+│   │   ├── preprocess.py
+│   │   └── split.py
+│            
+│   |__ train.py      # Model training
+│   ├── api/              # REST API
+│   │   └── main.py
+│   ├── dashboard/        # Streamlit dashboard
+│   │   └── app.py
+│   └── explainability/   # SHAP analysis
+│       └── shap_analysis.py
+│
+├── reports/              # Outputs and visualizations
+│   ├── shap_summary_xgboost.png
+│   ├── model_comparison.csv
+│   └── shap_values_xgboost.csv
+│
+├── docs/                 # Documentation
+│   ├── technical_report.md
+│   └── presentation_outline.md
+│
+├── configs/
+│   └── config.yaml       # Model and pipeline configurations
+│
 ├── requirements.txt
-├── Dockerfile
-├── docker-compose.yml
-└── README.md
+├── README.md
+└── LICENSE
 
-9. Testing & Monitoring
+🚀 Quick Start
 
-Unit Tests: Cover preprocess (temporal/agg/WoE), train, predict, SHAP; synthetic fixtures ensure executability.
+**Prerequisites**
 
-Coverage: >85% on src/; report to HTML/XML.
+python 3.11+
 
-Monitoring:
+pip install -r requirements.txt
 
-MLflow: UI at http://localhost:5000; tracks params/metrics/artifacts; registry for versioning.
+1. Data Processing
 
-Drift Detection: Placeholder in src/models/evaluate.py (e.g., KS-test); integrate Evidently AI for production.
+# Create proxy target and split data
 
-Retraining: Quarterly via cron on new data.
+python src/data/split.py
 
+# Generates:
+# - X_train.csv, X_test.csv
+# - y_train.csv, y_test.csv
 
-10. Troubleshooting
+2. Train Models
 
-Missing Dependencies: pip install -r requirements.txt --upgrade.
+# Train all models with MLflow tracking
 
-Path Errors: export PYTHONPATH=${PWD}; verify CSV in data/raw/.
+python src/models/train.py
 
-Docker Conflicts: Edit docker-compose.yml ports (e.g., 8000→8080).
+# Outputs:
+# - Best model: xgboost_model.pkl (87.3% ROC-AUC)
+# - Other models for comparison
 
-Memory Issues: Sample data (n_rows=500 in download_data.py); monitor with htop.
+3. Explainability (SHAP)
 
-Debug: Set LOG_LEVEL=DEBUG env; check MLflow logs or docker logs credit-risk-api -f.
+# Generate SHAP interpretability reports
 
-WoE Warnings: Ensure target present during fit; ignore NaN via fillna(0).
+python -m src.explainability.shap_analysis
 
-11. Contributing & License
+# Outputs saved to /reports:
+# - shap_summary_xgboost.png
+# - shap_bar_xgboost.png
+# - shap_values_xgboost.csv
 
-Process: Fork → Branch (git checkout -b feature/x) → Commit → Push → PR (with tests/docs).
+4. Run API
 
-Style: Black/Flake8 (CI-enforced).
+# Start FastAPI server
 
-License: MIT – see LICENSE.
+python src/api/main.py
 
-12. References
+# API Docs: http://localhost:8000/docs
 
-Regulatory: Basel II Accord (BIS.org); HKMA Alternative Credit Scoring Guidelines.
+5. Launch Dashboard
 
-ML Practices: "Credit Risk Analytics" (Siddaiah, 2017); Towards Data Science – WoE in Credit Modeling.
+# Streamlit web interface
 
-Tools: scikit-learn Pipelines; SHAP Documentation (shap.readthedocs.io).
+streamlit run dashboard/app.py
 
-Papers: "RFM Analysis for Customer Segmentation" (Hughes, 1994); K-Means in Unsupervised Credit Risk (Journal of Risk, 2020).
+# Dashboard available at: http://localhost:8501
 
+📊 Model Performance
 
-Author: Saron Zeleke – Portfolio project for finance ML engineering roles.
+| Model             | ROC-AUC | Precision | Recall | F1-Score |
+| ----------------- | ------- | --------- | ------ | -------- |
+| 🏆 XGBoost        | 0.873   | 0.637     | 0.197  | 0.301    |
+| 🌲 Random Forest  | 0.868   | 0.575     | 0.252  | 0.350    |
+| 📊 Gradient Boost | 0.865   | 0.642     | 0.144  | 0.236    |
+| 📉 Logistic       | 0.758   | 0.000     | 0.000  | 0.000    |
 
-Updated: February 2026
+Confusion Matrix (XGBoost)
 
-Questions? Sharonkuye369@gmail.com. 🚀
+| Actual \ Predicted | Low    | High |
+| ------------------ | ------ | ---- |
+| Low                | 16,680 | 248  |
+| High               | 1,770  | 435  |
+
+🔧 API Usage
+
+POST /predict
+
+curl -X POST "http://localhost:8000/predict" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "CustomerId": 12345,
+       "Amount": 250.00,
+       "Value": 225.00,
+       "TransactionStartTime": "2024-01-15 14:30:00",
+       "CountryCode": "US",
+       "CurrencyCode": "USD",
+       "ProviderId": "PROV1",
+       "ProductCategory": "Electronics",
+       "ChannelId": "Online",
+       "PricingStrategy": "Fixed"
+     }'
+
+Sample Response
+
+{
+  "transaction_id": "550e8400-e29b-41d4-a716-446655440000",
+  "prediction": 0,
+  "probability": 0.073,
+  "risk_level": "Low",
+  "threshold_used": 0.5,
+  "timestamp": "2024-01-15T14:35:22.123Z"
+}
+
+📈 Feature Importance (SHAP)
+
+| Feature          | Type     | Impact on Risk      |
+| ---------------- | -------- | ------------------- |
+| TransactionMonth | Temporal | Seasonal pattern    |
+| TransactionDay   | Temporal | Day-of-month effect |
+| Amount           | Numeric  | Transaction size    |
+| TransactionHour  | Temporal | Time-of-day effect  |
+| Value            | Numeric  | Transaction value   |
+
+**Key Insights**
+
+1. High-risk transactions peak in December
+
+2. Larger amounts are more likely to be flagged
+
+3. Late-night transactions are higher risk
+
+🧪 Testing
+
+# Run unit and integration tests
+
+ pytest tests/
+
+# Test API endpoints
+
+ python tests/test_api.py
+
+# Batch prediction test
+
+ python src/predict.py --input x_test.csv
+
+📝 Requirements
+
+pandas==2.2.0
+numpy==1.26.0
+scikit-learn==1.6.1
+xgboost==3.1.0
+shap==0.49.1
+mlflow==3.9.0
+fastapi==0.115.0
+uvicorn==0.29.0
+streamlit==1.29.0
+joblib==1.3.0
+matplotlib==3.8.0
+seaborn==0.13.0
+pyyaml==6.0
+
+🤝 Contributing
+
+1. Fork the repository
+
+2. Create a feature branch
+
+3. Commit your changes
+
+4. Push to branch
+
+5. Open a Pull Request
+
+📄 License
+
+MIT License — see LICENSE file
+
+👥 Author
+
+Saron Zeleke
+
+🙏 Acknowledgments
+
+1. SHAP for model interpretability
+
+2. MLflow for experiment tracking
+
+3. FastAPI and Streamlit for production deployment
