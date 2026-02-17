@@ -157,30 +157,50 @@ Confusion Matrix (XGBoost)
 
 POST /predict
 ```
-curl -X POST "http://localhost:8000/predict" \
-     -H "Content-Type: application/json" \
-     -d '{
-       "CustomerId": 12345,
-       "Amount": 250.00,
-       "Value": 225.00,
-       "TransactionStartTime": "2024-01-15 14:30:00",
-       "CountryCode": "US",
-       "CurrencyCode": "USD",
-       "ProviderId": "PROV1",
-       "ProductCategory": "Electronics",
-       "ChannelId": "Online",
-       "PricingStrategy": "Fixed"
-     }'
+{
+{
+  "TransactionId": 1001,
+  "BatchId": 2001,
+  "AccountId": 3001,
+  "SubscriptionId": 4001,
+  "CustomerId": 5001,
+  "CurrencyCode": "USD",
+  "CountryCode": 840,
+  "ProviderId": 6001,
+  "ProductId": 7001,
+  "ProductCategory": "airtime",
+  "ChannelId": 1,
+  "Amount": 150.0,
+  "Value": 150.0,
+  "TransactionStartTime": "2024-02-17 14:30:00",
+  "PricingStrategy": 2,
+  "FraudResult": 0
+}
+}
 
-Sample Response
+✅ Sample Response
 
 {
-  "transaction_id": "550e8400-e29b-41d4-a716-446655440000",
+{
+  "transaction_id": "91386216-d77d-4198-bf1c-f7c4721eef4e",
   "prediction": 0,
-  "probability": 0.073,
+  "probability": 0.0000043345212361600716,
   "risk_level": "Low",
+  "model_used": "xgboost",
   "threshold_used": 0.5,
-  "timestamp": "2024-01-15T14:35:22.123Z"
+  "timestamp": "2026-02-17T16:36:28.656664",
+  "features_used": [
+    "CountryCode",
+    "Amount",
+    "Value",
+    "PricingStrategy",
+    "FraudResult",
+    "TransactionHour",
+    "TransactionDay",
+    "TransactionMonth",
+    "TransactionDayOfWeek"
+  ]
+}
 }
 
 ```
