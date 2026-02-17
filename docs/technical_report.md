@@ -2,69 +2,73 @@
 
 ## Credit Risk Prediction System
 
-**Version**: 1.0.0  
-**Last Updated**: 2026-02-16  
-**Author**: Data Science Team
-
----
+**Author**: Saron Zeleke
 
 ## 1. System Architecture
-┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
-│ Data Layer │────▶│ Model Layer │────▶│ Deployment │
-│ - Raw Data │ │ - XGBoost │ │ - FastAPI │
-│ - Processed │ │ - RF, GB │ │ - Streamlit │
-│ - Features │ │ - Logistic │ │ - MLflow │
-└─────────────────┘ └─────────────────┘ └─────────────────┘
-│ │ │
-▼ ▼ ▼
-┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
-│ Data Flow │ │ Training │ │ Monitoring │
-│ - RFM creation │ │ - GridSearchCV │ │ - SHAP │
-│ - Feature eng │ │ - CV=5 │ │ - Metrics │
-│ - Scaling │ │ - MLflow logs │ │ - Reports │
-└─────────────────┘ └─────────────────┘ └─────────────────┘
 
-text
+┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
+│   Data Layer    │──▶│   Model Layer   │──▶│   Deployment    │
+│  - Raw Data     │   │  - XGBoost      │   │  - FastAPI      │
+│  - Processed    │   │  - RF, GB       │   │  - Streamlit    │
+│  - Features     │   │  - Logistic     │   │  - MLflow       │
+└─────────────────┘   └─────────────────┘   └─────────────────┘
+       │                     │                     │
+       ▼                     ▼                     ▼
+┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
+│   Data Flow     │   │   Training      │   │   Monitoring    │
+│  - RFM creation │   │  - GridSearchCV │   │  - SHAP         │
+│  - Feature eng  │   │  - CV=5         │   │  - Metrics      │
+│  - Scaling      │   │  - MLflow logs  │   │  - Reports      │
+└─────────────────┘   └─────────────────┘   └─────────────────┘
 
----
+
 
 ## 2. Data Processing Pipeline
 
 ### 2.1 RFM Target Creation
-```python
+
 # Creates proxy target using:
+
 - Recency: Days since last transaction
 - Frequency: Number of transactions
 - Monetary: Total transaction amount
 
 # Clustering approach
+
 - K-Means with n_clusters=3
 - High-risk = highest recency + lowest frequency/monetary
 - Silhouette score: 0.3-0.7 (good separation)
-2.2 Feature Engineering
-Feature	Type	Description
-TransactionHour	Temporal	Hour of transaction (0-23)
-TransactionDay	Temporal	Day of month
-TransactionMonth	Temporal	Month of year
-TransactionDayOfWeek	Temporal	Day of week (0-6)
-Amount	Numeric	Transaction amount
-Value	Numeric	Transaction value
-CountryCode	Categorical	Origin country
-CurrencyCode	Categorical	Transaction currency
-ProviderId	Categorical	Service provider
-ProductCategory	Categorical	Product type
-ChannelId	Categorical	Transaction channel
-PricingStrategy	Categorical	Pricing model
-2.3 Data Split Statistics
-text
+
+**2.2 Feature Engineering**
+
+| Feature            | Type        | Description                     |
+|-------------------|------------|---------------------------------|
+| TransactionHour    | Temporal   | Hour of transaction (0-23)      |
+| TransactionDay     | Temporal   | Day of month                     |
+| TransactionMonth   | Temporal   | Month of year                    |
+| TransactionDayOfWeek | Temporal | Day of week (0-6)                |
+| Amount             | Numeric    | Transaction amount               |
+| Value              | Numeric    | Transaction value                |
+| CountryCode        | Categorical| Origin country                   |
+| CurrencyCode       | Categorical| Transaction currency             |
+| ProviderId         | Categorical| Service provider                 |
+| ProductCategory    | Categorical| Product type                     |
+| ChannelId          | Categorical| Transaction channel              |
+| PricingStrategy    | Categorical| Pricing model                    |
+
+**2.3 Data Split Statistics**
+
 Total transactions: 95,662
 Training set: 76,529 (80%)
 Test set: 19,133 (20%)
 High-risk rate: 11.5% (balanced enough)
-3. Model Training
-3.1 Model Configurations
+
+## 3. Model Training
+
+**3.1 Model Configurations**
+
 XGBoost (Best Model)
-yaml
+
 params:
   n_estimators: 500
   max_depth: 7
@@ -72,26 +76,31 @@ params:
   colsample_bytree: 0.8
   subsample: 1.0
   random_state: 42
+
 Random Forest
-yaml
+
 params:
   n_estimators: 200
   max_depth: None
   min_samples_split: 10
   random_state: 42
+
 Gradient Boosting
-yaml
+
 params:
   n_estimators: 200
   max_depth: 5
   learning_rate: 0.2
   random_state: 42
-3.2 Training Pipeline
-python
+  
+**3.2 Training Pipeline**
+
 # 5-fold Stratified Cross-Validation
+
 cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
 # GridSearchCV with scoring='roc_auc'
+
 grid_search = GridSearchCV(
     estimator=model_class(),
     param_grid=config,
@@ -100,31 +109,41 @@ grid_search = GridSearchCV(
     n_jobs=-1,
     verbose=1
 )
-3.3 Performance Metrics
-Model	ROC-AUC	Precision	Recall	F1-Score
-XGBoost	0.873	0.637	0.197	0.301
-Random Forest	0.868	0.575	0.252	0.350
-Gradient Boosting	0.865	0.642	0.144	0.236
-Logistic	0.758	0.000	0.000	0.000
+
+**3.3 Performance Metrics**
+
+| Model             | ROC-AUC | Precision | Recall | F1-Score |
+|------------------|---------|-----------|--------|----------|
+| XGBoost           | 0.873   | 0.637     | 0.197  | 0.301    |
+| Random Forest     | 0.868   | 0.575     | 0.252  | 0.350    |
+| Gradient Boosting | 0.865   | 0.642     | 0.144  | 0.236    |
+| Logistic          | 0.758   | 0.000     | 0.000  | 0.000    |
+
 Confusion Matrix (XGBoost):
 
-text
-              Predicted
-              Low    High
-Actual Low   16,680   248
-       High   1,770   435
-4. Model Explainability (SHAP)
-4.1 SHAP Computation
-python
+| Actual \ Predicted | Low    | High  |
+|------------------|--------|-------|
+| Low               | 16,680 | 248   |
+| High              | 1,770  | 435   |
+
+
+## 4. Model Explainability (SHAP)
+
+**4.1 SHAP Computation**
+
 # SHAP explainer selection
-if model_type in ['xgboost', 'random_forest', 'gradient_boosting']:
+
+if model_type in ['xgboost', 'random_forest', 'gradient_boosting','Logistic Regreation']:
     explainer = shap.TreeExplainer(model)
 else:
     explainer = shap.LinearExplainer(model, X_sample)
 
 # Values computed on 500 samples
+
 shap_values = explainer.shap_values(X_sample.astype(np.float32))
-4.2 Feature Importance
+
+**4.2 Feature Importance**
+
 | Rank | Feature | Mean |SHAP| Interpretation |
 |------|---------|-----------|----------------|
 | 1 | TransactionMonth | 3.30 | Seasonal patterns strongest predictor |
@@ -133,16 +152,20 @@ shap_values = explainer.shap_values(X_sample.astype(np.float32))
 | 4 | TransactionHour | 0.28 | Time-of-day patterns |
 | 5 | Value | 0.24 | Correlated with amount |
 
-4.3 SHAP Dependencies
+**4.3 SHAP Dependencies**
+
 Positive SHAP → Increases risk
 
 Negative SHAP → Decreases risk
 
 Feature interactions captured
 
-5. API Design
-5.1 Endpoints
+## 5. API Design
+
+**5.1 Endpoints**
+
 POST /predict
+
 Request Schema:
 
 {
