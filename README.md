@@ -37,49 +37,50 @@ identify high-risk transactions in real-time. The solution combines:
 | **Interactive Dashboard** | Streamlit dashboard visualizes risk distributions and model performance        |
 | **Production Ready**      | CI/CD pipelines, reproducible training, and deployment-ready structure         |
 
-
 📁 Project Structure
-
+```
 credit-risk-model/
 │
 ├── data/
-│   ├── raw/              # Original transaction data
-│   └── processed/        # Cleaned and feature-engineered datasets
+│ ├── raw/ # Original transaction data
+│ └── processed/ # Cleaned and feature-engineered datasets
 │
-├── models/               # Saved models
-│   ├── xgboost_model.pkl # Best model (87.3% ROC-AUC)
-│   ├── random_forest_model.pkl
-│   ├── gradient_boosting_model.pkl
-│   └── logistic_model.pkl
+├── models/ # Saved models
+│ ├── xgboost_model.pkl # Best model (87.3% ROC-AUC)
+│ ├── random_forest_model.pkl
+│ ├── gradient_boosting_model.pkl
+│ └── logistic_model.pkl
 │
-├── src/                  # Source code
-│   ├── data/             # Data processing
-│   │   ├── preprocess.py
-│   │   └── split.py
-│            
-│   |__ train.py      # Model training
-│   ├── api/              # REST API
-│   │   └── main.py
-│   ├── dashboard/        # Streamlit dashboard
-│   │   └── app.py
-│   └── explainability/   # SHAP analysis
-│       └── shap_analysis.py
+├── src/ # Source code
+│ ├── data/ # Data processing
+│ │ ├── preprocess.py
+│ │ └── split.py
+│ │
+│ ├── models/ # Model training
+│ │ └── train.py
+│ ├── api/ # REST API
+│ │ └── main.py
+│ ├── dashboard/ # Streamlit dashboard
+│ │ └── app.py
+│ └── explainability/ # SHAP analysis
+│ └── shap_analysis.py
 │
-├── reports/              # Outputs and visualizations
-│   ├── shap_summary_xgboost.png
-│   ├── model_comparison.csv
-│   └── shap_values_xgboost.csv
+├── reports/ # Outputs and visualizations
+│ ├── shap_summary_xgboost.png
+│ ├── model_comparison.csv
+│ └── shap_values_xgboost.csv
 │
-├── docs/                 # Documentation
-│   ├── technical_report.md
-│   └── presentation_outline.md
+├── docs/ # Documentation
+│ ├── technical_report.md
+│ └── presentation_outline.md
 │
 ├── configs/
-│   └── config.yaml       # Model and pipeline configurations
+│ └── config.yaml # Model and pipeline configurations
 │
 ├── requirements.txt
 ├── README.md
 └── LICENSE
+```
 
 🚀 Quick Start
 
@@ -155,7 +156,7 @@ Confusion Matrix (XGBoost)
 🔧 API Usage
 
 POST /predict
-
+```
 curl -X POST "http://localhost:8000/predict" \
      -H "Content-Type: application/json" \
      -d '{
@@ -181,6 +182,8 @@ Sample Response
   "threshold_used": 0.5,
   "timestamp": "2024-01-15T14:35:22.123Z"
 }
+
+```
 
 📈 Feature Importance (SHAP)
 
@@ -213,7 +216,7 @@ Sample Response
 # Batch prediction test
 
  python src/predict.py --input x_test.csv
-
+```
 📝 Requirements
 
 pandas==2.2.0
@@ -229,7 +232,7 @@ joblib==1.3.0
 matplotlib==3.8.0
 seaborn==0.13.0
 pyyaml==6.0
-
+```
 🤝 Contributing
 
 1. Fork the repository
