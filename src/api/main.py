@@ -15,22 +15,19 @@ import pandas as pd
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 from contextlib import asynccontextmanager
+import numpy as np
 
 # Add project root to path for imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
-# ----------------------
 # Logging
-# ----------------------
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# ----------------------
 # Constants - CORRECTED PATHS
-# ----------------------
 BASE_DIR = r"C:\Users\admin\credit-risk-model"
 MODELS_DIR = os.path.join(BASE_DIR, "models")
 PROCESSED_DATA_DIR = os.path.join(BASE_DIR, "data", "processed")
@@ -46,18 +43,14 @@ MODEL_PATHS = {
 # Default model (best performing)
 DEFAULT_MODEL = 'xgboost'
 
-# ----------------------
 # Globals
-# ----------------------
 model = None
 preprocessor = None
 model_info = {}
 current_model_name = DEFAULT_MODEL
 
-
-# ----------------------
 # Pydantic schemas
-# ----------------------
+
 class Transaction(BaseModel):
     """Transaction input schema - matches your training data"""
     AccountId: int = Field(..., description="Account identifier")
@@ -105,10 +98,7 @@ class ModelInfoResponse(BaseModel):
     model_metrics: Optional[dict] = None
     features_count: Optional[int] = None
 
-
-# ----------------------
 # Model Manager
-# ----------------------
 class ModelManager:
     """Manages model loading, switching, and prediction"""
     
@@ -260,10 +250,8 @@ class ModelManager:
                 available.append(name)
         return available
 
-
-# ----------------------
 # Lifespan
-# ----------------------
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events"""
@@ -286,9 +274,8 @@ async def lifespan(app: FastAPI):
     logger.info("👋 API shutdown complete")
 
 
-# ----------------------
 # FastAPI app
-# ----------------------
+
 app = FastAPI(
     title="Credit Risk Prediction API",
     description="Predict credit risk using multiple ML models",
@@ -296,10 +283,7 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-
-# ----------------------
 # API Endpoints
-# ----------------------
 
 @app.get("/", tags=["Health"])
 async def root():
@@ -399,9 +383,7 @@ async def health_check():
     }
 
 
-# ----------------------
 # Run uvicorn
-# ----------------------
 if __name__ == "__main__":
     import uvicorn
     import numpy as np
