@@ -21,8 +21,6 @@
 │  - Scaling      │   │  - MLflow logs  │   │  - Reports      │
 └─────────────────┘   └─────────────────┘   └─────────────────┘
 
-
-
 ## 2. Data Processing Pipeline
 
 ### 2.1 RFM Target Creation
@@ -213,6 +211,7 @@ uvicorn src.api.main:app --host 127.0.0.1 --port 8000 --reload
 streamlit run src/dashboard/app.py --server.port 8501
 
 **6.2 Docker Deployment**
+
  dockerfile
  FROM python:3.11-slim
  WORKDIR /app
@@ -247,7 +246,7 @@ LOG_LEVEL=INFO
 2026-02-16 21:44:37,765 - INFO - Prediction: 0, prob=0.073
 2026-02-16 21:44:37,766 - ERROR - Invalid input: missing field
 
-##8. Testing Strategy
+## 8. Testing Strategy
 
 **8.1 Unit Tests**
 
@@ -284,29 +283,29 @@ XGBoost SHAP warning (version compatibility)
 
 **Future Improvements**
 
-Feature Engineering
+1. Feature Engineering
 
-Add customer lifetime value
+ Add customer lifetime value
 
-Include macroeconomic indicators
+ Include macroeconomic indicators
 
-Transaction velocity features
+ Transaction velocity features
 
-**Model Enhancements**
+2. Model Enhancements
 
-Ensemble of top models
+ Ensemble of top models
 
-Deep learning approaches
+ Deep learning approaches
 
-Online learning for real-time updates
+ Online learning for real-time updates
 
-**Deployment**
+3. Deployment
 
-Kubernetes orchestration
+ Kubernetes orchestration
 
-A/B testing framework
+ A/B testing framework
 
-Model drift detection
+ Model drift detection
 
 ## 10. References
 
