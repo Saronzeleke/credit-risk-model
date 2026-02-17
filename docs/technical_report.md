@@ -129,18 +129,18 @@ Confusion Matrix (XGBoost):
 **4.1 SHAP Computation**
 
 # SHAP explainer selection
-
+```
 if model_type in ['xgboost', 'random_forest', 'gradient_boosting','Logistic Regreation']:
     explainer = shap.TreeExplainer(model)
 else:
     explainer = shap.LinearExplainer(model, X_sample)
-
+```
 # Values computed on 500 samples
 
 shap_values = explainer.shap_values(X_sample.astype(np.float32))
 
 **4.2 Feature Importance**
-
+```
 | Rank | Feature | Mean |SHAP| Interpretation |
 |------|---------|-----------|----------------|
 | 1 | TransactionMonth | 3.30 | Seasonal patterns strongest predictor |
@@ -148,7 +148,7 @@ shap_values = explainer.shap_values(X_sample.astype(np.float32))
 | 3 | Amount | 0.40 | Transaction size indicator |
 | 4 | TransactionHour | 0.28 | Time-of-day patterns |
 | 5 | Value | 0.24 | Correlated with amount |
-
+```
 **4.3 SHAP Dependencies**
 
 Positive SHAP → Increases risk
