@@ -1,4 +1,3 @@
-# tests/test_data_processing.py
 import pandas as pd
 import numpy as np
 import sys
@@ -6,7 +5,7 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from src.data_processing import TemporalFeatureExtractor, AggregateFeatureEngineer, create_data_pipeline
-from src.target_engineering import RFMCalculator
+from src.target_engineering import RFMCalculator, RiskLabelGenerator
 
 def test_temporal_feature_extractor():
     """Test temporal feature extraction"""
@@ -48,17 +47,19 @@ def test_aggregate_feature_engineer():
     engineer = AggregateFeatureEngineer()
     result = engineer.transform(test_data.copy())
     
-    # Assertions
-    assert 'total_amount' in result.columns
-    assert 'avg_amount' in result.columns
-    assert 'transaction_count' in result.columns
-    assert 'std_amount' in result.columns
+    # Check for expected column names from your implementation
+    expected_columns = ['Amount_sum', 'Amount_mean', 'Amount_std', 'tx_count', 
+                       'Value_sum', 'Value_mean', 'Value_std', 'amount_value_ratio', 
+                       'transaction_frequency']
+    
+    for col in expected_columns:
+        assert col in result.columns, f"Expected column '{col}' not found in {result.columns.tolist()}"
     
     # Check calculations
     c1_data = result[result['CustomerId'] == 'C1'].iloc[0]
-    assert c1_data['total_amount'] == 300
-    assert c1_data['avg_amount'] == 150
-    assert c1_data['transaction_count'] == 2
+    assert c1_data['Amount_sum'] == 300
+    assert c1_data['Amount_mean'] == 150
+    assert c1_data['tx_count'] == 2
     
     print("✓ AggregateFeatureEngineer test passed!")
 
@@ -80,17 +81,28 @@ def test_rfm_target_engineer():
         'Value': [100, 200, 150, 300, 400, 50, 75]
     })
     
-    # Initialize and transform
-    engineer = RFMCalculator(snapshot_date='2018-11-25', random_state=42)
+    # Initialize RFMCalculator (no random_state parameter)
+    engineer = RFMCalculator(snapshot_date='2018-11-25')
     rfm_df = engineer.calculate_rfm(test_data)
     
-    # Assertions
+    # Assertions for RFM DataFrame
     assert 'recency' in rfm_df.columns
     assert 'frequency' in rfm_df.columns
     assert 'monetary' in rfm_df.columns
-    assert len(rfm_df) == 3  
+    assert len(rfm_df) == 3  # 3 unique customers
     
-    print("RFMTargetEngineer test passed!")
+    # Test the complete workflow with RiskLabelGenerator
+    generator = RiskLabelGenerator(random_state=42)
+    rfm_clustered = generator.cluster_customers(rfm_df)
+    target_df = generator.create_risk_labels(rfm_clustered)
+    
+    # Check the final target DataFrame
+    assert 'CustomerId' in target_df.columns
+    assert 'is_high_risk' in target_df.columns
+    assert len(target_df) == 3
+    assert target_df['is_high_risk'].dtype in [np.int64, np.int32, int]
+    
+    print("✓ RFMTargetEngineer test passed!")
 
 def test_data_pipeline():
     """Test complete data pipeline creation"""
@@ -98,9 +110,15 @@ def test_data_pipeline():
     
     # Assertions
     assert isinstance(pipeline, type(create_data_pipeline()))
-    assert 'temporal_extractor' in pipeline.named_steps
-    assert 'aggregate_engineer' in pipeline.named_steps
-    assert 'preprocessor' in pipeline.named_steps
+    
+    # Get step names
+    step_names = list(pipeline.named_steps.keys())
+    print(f"Pipeline steps: {step_names}")
+    
+    # Check for expected steps
+    assert 'temporal' in step_names
+    assert 'aggregate' in step_names
+    assert 'woe' in step_names
     
     print("✓ Data pipeline creation test passed!")
 
