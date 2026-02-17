@@ -236,6 +236,7 @@ POST /predict
 # Batch prediction test
 
  python src/predict.py --input x_test.csv
+ 
 ```
 📝 Requirements
 
