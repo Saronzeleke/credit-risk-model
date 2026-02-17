@@ -1,8 +1,3 @@
-"""
-Credit Risk Prediction API
-Supports all 4 trained models with dynamic loading
-"""
-
 import os
 import sys
 import uuid
@@ -168,15 +163,7 @@ class ModelManager:
         except Exception as e:
             logger.error(f"❌ Failed to load preprocessor: {e}")
             preprocessor = None
-    # def add_time_features(df: pd.DataFrame) -> pd.DataFrame:
-    #   df['TransactionStartTime'] = pd.to_datetime(df['TransactionStartTime'])
-    #   df['TransactionHour'] = df['TransactionStartTime'].dt.hour
-    #   df['TransactionDay'] = df['TransactionStartTime'].dt.day
-    #   df['TransactionMonth'] = df['TransactionStartTime'].dt.month
-    #   df['TransactionDayOfWeek'] = df['TransactionStartTime'].dt.dayofweek
-    #   return df
 
-    
     @staticmethod
     def preprocess_transaction(transaction: Dict) -> pd.DataFrame:
         """Convert transaction dict to model-ready DataFrame"""
@@ -200,36 +187,6 @@ class ModelManager:
         # Ensure numeric dtype
         df = df.astype(np.float32)
         return df
-    # def preprocess_transaction(transaction: Dict) -> pd.DataFrame:
-    #     """Convert transaction dict to model-ready DataFrame"""
-    #     global preprocessor
-        
-    #     # Convert to DataFrame
-    #     df = pd.DataFrame([transaction])
-        
-    #     # Handle datetime
-    #     if 'TransactionStartTime' in df.columns:
-    #         df['TransactionStartTime'] = pd.to_datetime(df['TransactionStartTime'])
-        
-    #     # Drop non-feature columns if preprocessor exists
-    #     if preprocessor is not None:
-    #         NON_FEATURE_COLS = {'AccountId', 'BatchId', 'TransactionId', 'FraudResult', 'TransactionStartTime'}
-    #         df = df.drop(columns=[c for c in NON_FEATURE_COLS if c in df.columns], errors='ignore')
-            
-    #         try:
-    #             df_processed = preprocessor.transform(df)
-    #             # Convert back to DataFrame for consistency
-    #             if hasattr(preprocessor, 'get_feature_names_out'):
-    #                 feature_names = preprocessor.get_feature_names_out()
-    #                 df_processed = pd.DataFrame(df_processed, columns=feature_names)
-    #         except Exception as e:
-    #             logger.error(f"Preprocessing failed: {e}")
-    #             raise HTTPException(status_code=500, detail=f"Preprocessing failed: {e}")
-    #     else:
-    #         # Without preprocessor, use raw numeric columns
-    #         df_processed = df.select_dtypes(include=[np.number])
-        
-    #     return df_processed
     
     @staticmethod
     def predict_single(transaction: Dict) -> Dict[str, Any]:
