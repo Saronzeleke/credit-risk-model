@@ -116,7 +116,7 @@ Data Flow → Feature Engineering → Model Training → Evaluation → Deployme
 # System Architecture
 
 **🏛️ Production Deployment**
-
+```
 User
  ↓
 FastAPI (Port 8000)
@@ -127,7 +127,7 @@ FastAPI (Port 8000)
 XGBoost Model (87.3% ROC-AUC)
  ↓
 Streamlit Dashboard (Port 8501)
-
+```
 1. Real-time predictions
 
 2. SHAP explainability integrated
@@ -139,7 +139,7 @@ Streamlit Dashboard (Port 8501)
 **🔧 Sample Request**
 
 POST /predict
-
+```
 {
   "CustomerId": 12345,
   "Amount": 250.00,
@@ -150,7 +150,7 @@ POST /predict
   "ChannelId": "Online"
 }
 
-**✅ Sample Response**
+✅ Sample Response
 
 {
   "transaction_id": "550e8400-e29b-41d4-a716-446655440000",
@@ -160,7 +160,7 @@ POST /predict
   "threshold_used": 0.5,
   "timestamp": "2024-01-15T14:35:22.123Z"
 }
-
+```
 # Dashboard Demo
 
 **Interactive Features:**
@@ -253,6 +253,7 @@ GitHub: https://github.com/Saronzeleke/credit-risk-model.git
 # Hardware:
 
 you can use kaggle gpu for training model
+
 RAM: 8GB+
 
 Storage: 10GB
@@ -267,13 +268,13 @@ Docker (optional)
 
 # Performance:
 
-Training time: 30 minutes
+Training time: 15 minutes
 
 Prediction time: <100ms
 
 Throughput: 1000 req/sec
-
-# Configuration:
+```
+Configuration:
 
 models:
   logistic:
@@ -298,3 +299,4 @@ models:
     learning_rate: [0.01, 0.05, 0.1]
     subsample: [0.8, 1.0]
     colsample_bytree: [0.8, 1.0]
+```
