@@ -22,7 +22,6 @@ warnings.filterwarnings('ignore')
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 # Page config
-
 st.set_page_config(
     page_title="Credit Risk Assessment Dashboard",
     page_icon="🏦",
@@ -87,7 +86,7 @@ def load_model_and_data(model_name="XGBoost"):
         
         if not model_path.exists():
             st.error(f"Model not found: {model_path}")
-            return None, None, None, None
+            return None, None, None, None, None
         
         # Load model
         model_data = joblib.load(model_path)
@@ -120,6 +119,7 @@ def load_model_and_data(model_name="XGBoost"):
         
         st.sidebar.success(f"✅ Loaded {model_name}")
         st.sidebar.info(f"📊 Test data: {X_test.shape}")
+        st.sidebar.info(f"📊 Features: {feature_names}")
         
         return X_test, y_test, model, feature_names, model_info
         
@@ -167,6 +167,7 @@ X_test, y_test, model, feature_names, model_info = load_model_and_data(model_opt
 
 if model is None:
     st.stop()
+
 # Helper functions
 def get_predictions(X):
     """Get predictions and probabilities."""
@@ -182,6 +183,27 @@ def get_risk_level(prob):
         return "Medium", "#D97706"
     else:
         return "High", "#DC2626"
+
+def prepare_features(input_df):
+    """
+    Prepare features to match the model's expected format.
+    This ensures all required features are present in the correct order.
+    """
+    # Get the expected feature names from the model
+    expected_features = feature_names if feature_names else X_test.columns.tolist()
+    
+    # Create a dataframe with all expected features, initialized to 0
+    prepared_df = pd.DataFrame(0, index=input_df.index, columns=expected_features)
+    
+    # Update with actual values from input
+    for col in input_df.columns:
+        if col in prepared_df.columns:
+            prepared_df[col] = input_df[col]
+    
+    # Ensure correct column order
+    prepared_df = prepared_df[expected_features]
+    
+    return prepared_df
 
 # Model Performance Page
 if page == "📊 Model Performance":
@@ -273,6 +295,10 @@ elif page == "🎯 Predict":
     
     st.info("Enter transaction details below to get instant risk assessment")
     
+    # Display expected features for debugging (optional, can be removed)
+    with st.expander("📋 Model Features", expanded=False):
+        st.write("Expected features:", feature_names)
+    
     with st.form("prediction_form"):
         col1, col2, col3 = st.columns(3)
         
@@ -286,6 +312,15 @@ elif page == "🎯 Predict":
             day_of_week = st.selectbox("Day of Week", 
                                        ["Monday", "Tuesday", "Wednesday", "Thursday", 
                                         "Friday", "Saturday", "Sunday"])
+            
+            # Add FraudResult field (this is the missing feature)
+            st.subheader("🔍 Fraud Indicators")
+            fraud_result = st.selectbox(
+                "Previous Fraud Result", 
+                [0, 1], 
+                index=0,
+                help="0 = No previous fraud, 1 = Previous fraud detected"
+            )
         
         with col2:
             st.subheader("🏷️ Product Information")
@@ -314,12 +349,13 @@ elif page == "🎯 Predict":
             "Friday": 4, "Saturday": 5, "Sunday": 6
         }
         
-        # Create input dataframe
+        # Create input dataframe with ALL required features including FraudResult
         input_data = pd.DataFrame([{
             'Amount': amount,
             'Value': value,
             'CountryCode': country,
             'PricingStrategy': pricing,
+            'FraudResult': fraud_result,  
             'TransactionHour': trans_hour,
             'TransactionDay': trans_day,
             'TransactionMonth': trans_month,
@@ -327,8 +363,14 @@ elif page == "🎯 Predict":
         }])
         
         try:
+            # Prepare features to match model's expected format and order
+            prepared_input = prepare_features(input_data)
+            
+            # Debug info (optional)
+            st.write("Input features:", prepared_input.columns.tolist())
+            
             # Predict
-            prob = model.predict_proba(input_data)[0, 1]
+            prob = model.predict_proba(prepared_input)[0, 1]
             risk_level, color = get_risk_level(prob)
             
             # Display results
@@ -404,6 +446,8 @@ elif page == "🎯 Predict":
             
         except Exception as e:
             st.error(f"Prediction failed: {e}")
+            st.error("Please check that all required features are provided.")
+
 # Explainability Page
 elif page == "📈 Explainability":
     st.markdown("<h1 class='main-header'>📈 Model Explainability</h1>", 
@@ -489,12 +533,19 @@ elif page == "📈 Explainability":
                 
             except Exception as e:
                 st.error(f"SHAP analysis failed: {e}")
+
 # Batch Prediction Page
 else:
     st.markdown("<h1 class='main-header'>📋 Batch Prediction</h1>", 
                 unsafe_allow_html=True)
     
     st.info("Upload a CSV file with multiple transactions for batch processing")
+    
+    # Display expected features
+    with st.expander("📋 Required Features", expanded=False):
+        st.write("Your CSV file should contain these columns:")
+        st.write(feature_names)
+        st.warning("Note: If any features are missing, they will be filled with 0")
     
     uploaded_file = st.file_uploader("Choose a CSV file", type="csv")
     
@@ -503,21 +554,23 @@ else:
             # Read file
             df = pd.read_csv(uploaded_file)
             st.write(f"📊 File contains {len(df)} transactions")
+            st.write("Preview of uploaded data:")
             st.dataframe(df.head())
+            
+            # Check for missing features
+            missing_features = [f for f in feature_names if f not in df.columns]
+            if missing_features:
+                st.warning(f"⚠️ Missing features: {missing_features}. These will be filled with 0.")
             
             if st.button("🚀 Run Batch Prediction", use_container_width=True):
                 with st.spinner("Processing..."):
-                    # Prepare data
+                    # Prepare data - ensure all required features are present
+                    X_pred = prepare_features(df)
+                    
+                    # Store IDs if present
                     id_cols = ['TransactionId', 'BatchId', 'AccountId', 'SubscriptionId', 
                               'CustomerId', 'ProductId']
                     ids_df = df[[c for c in id_cols if c in df.columns]].copy()
-                    
-                    # Select numeric features
-                    numeric_cols = ['Amount', 'Value', 'CountryCode', 'PricingStrategy',
-                                   'TransactionHour', 'TransactionDay', 'TransactionMonth',
-                                   'TransactionDayOfWeek']
-                    
-                    X_pred = df[[c for c in numeric_cols if c in df.columns]]
                     
                     # Predict
                     proba = model.predict_proba(X_pred)[:, 1]
@@ -531,7 +584,7 @@ else:
                                       for p in proba]
                     })
                     
-                    # Add IDs
+                    # Add IDs if present
                     if not ids_df.empty:
                         results = pd.concat([ids_df.reset_index(drop=True), 
                                             results.reset_index(drop=True)], axis=1)
@@ -559,3 +612,4 @@ else:
                     
         except Exception as e:
             st.error(f"Error processing file: {e}")
+            st.error("Please ensure your CSV file contains the required features.")
